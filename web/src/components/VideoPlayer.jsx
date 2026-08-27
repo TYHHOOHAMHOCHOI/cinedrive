@@ -197,9 +197,19 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     };
   }, [movie, accessToken]);
 
-  /* ---- Transcode Switcher ---- */
+  /* ---- Transcode & Mode Switcher ---- */
+  const enableIframeMode = () => {
+    setError(null);
+    setIsIframeMode(true);
+    if (artInstance.current?.destroy) {
+      try { artInstance.current.destroy(false); } catch (_) {}
+      artInstance.current = null;
+    }
+  };
+
   const switchToTranscode = (targetOffset = null) => {
     setError(null);
+    setIsIframeMode(false);
     const startFrom = targetOffset !== null
       ? targetOffset
       : (currentT > 5 ? currentT : 0);
@@ -209,6 +219,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
 
   const switchToDirect = () => {
     setError(null);
+    setIsIframeMode(false);
     const streamUrl = driveApi.getStreamUrl(movie.id);
     initPlayer(streamUrl, false, 0);
   };
@@ -400,8 +411,8 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </div>
           )}
 
-          {/* Error Overlay */}
-          {error && (
+          {/* Error Overlay (Chỉ hiển thị khi KHÔNG trong chế độ Iframe Mode) */}
+          {error && !isIframeMode && (
             <div className="player-error" style={{ zIndex: 20 }}>
               <AlertCircle size={48} style={{ color: '#ef4444' }} />
               <h3 style={{ fontSize: 18, fontWeight: 700 }}>Không thể phát trực tiếp trên trình duyệt Web</h3>
@@ -411,10 +422,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
               
               <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button
-                  onClick={() => {
-                    setError(null);
-                    setIsIframeMode(true);
-                  }}
+                  onClick={enableIframeMode}
                   style={{
                     background: 'linear-gradient(135deg, #10b981, #059669)',
                     color: '#fff',
@@ -516,8 +524,11 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
               
               <button
                 onClick={() => {
-                  setError(null);
-                  setIsIframeMode(!isIframeMode);
+                  if (isIframeMode) {
+                    switchToDirect();
+                  } else {
+                    enableIframeMode();
+                  }
                 }}
                 style={{
                   background: isIframeMode ? 'linear-gradient(135deg, #10b981, #059669)' : 'rgba(255,255,255,0.12)',
@@ -578,127 +589,131 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </div>
           </div>
 
-          {/* ---- GESTURE HUDs ---- */}
-          <div className="gesture-hud left-hud" style={{ opacity: hovering ? 1 : 0 }}>
-            <Sun />
-            <div className="hud-bar">
-              <div className="hud-bar-fill" style={{ height:`${brightness}%` }} />
-            </div>
-            <span className="hud-val">{brightness}%</span>
-          </div>
-          <div className="gesture-hud right-hud" style={{ opacity: hovering ? 1 : 0 }}>
-            {muted ? <VolumeX /> : <Volume2 />}
-            <div className="hud-bar">
-              <div className="hud-bar-fill" style={{ height:`${Math.round(volume * 100)}%` }} />
-            </div>
-            <span className="hud-val">{Math.round(volume * 100)}%</span>
-          </div>
-
-          {/* ---- CENTER CONTROLS ---- */}
-          <div className="player-center-controls" style={{ opacity: hovering ? 1 : 0 }}>
-            <button className="center-skip-btn" onClick={() => seek(-10)} title="Tua lùi 10s">
-              <SkipBack />
-              <span>10s</span>
-            </button>
-            <button className="center-play-btn" onClick={togglePlay} title={playing ? 'Dừng (Space)' : 'Phát (Space)'}>
-              {playing ? <Pause fill="white" /> : <Play fill="white" />}
-            </button>
-            <button className="center-skip-btn" onClick={() => seek(10)} title="Tua tiếp 10s">
-              <SkipForward />
-              <span>10s</span>
-            </button>
-          </div>
-
-          {/* ---- BOTTOM CONTROLS ---- */}
-          <div className="player-controls" style={{ opacity: hovering ? 1 : 0 }}>
-            {/* Scrubber */}
-            <div className="scrubber-row">
-              <div
-                className="scrubber-bg"
-                onClick={handleScrubberClick}
-                role="progressbar"
-                aria-valuenow={progress}
-                aria-label="Thanh tiến trình video"
-              >
-                <div className="scrubber-buffer" style={{ width: `${bufferPct}%` }} />
-                <div className="scrubber-fill"   style={{ width: `${progress}%`  }} />
-                <div className="scrubber-thumb"  style={{ left:  `${progress}%`  }} />
+          {/* ---- GESTURE HUDs (Chỉ dùng cho Custom Player) ---- */}
+          {!isIframeMode && (
+            <>
+              <div className="gesture-hud left-hud" style={{ opacity: hovering ? 1 : 0 }}>
+                <Sun />
+                <div className="hud-bar">
+                  <div className="hud-bar-fill" style={{ height:`${brightness}%` }} />
+                </div>
+                <span className="hud-val">{brightness}%</span>
               </div>
-            </div>
+              <div className="gesture-hud right-hud" style={{ opacity: hovering ? 1 : 0 }}>
+                {muted ? <VolumeX /> : <Volume2 />}
+                <div className="hud-bar">
+                  <div className="hud-bar-fill" style={{ height:`${Math.round(volume * 100)}%` }} />
+                </div>
+                <span className="hud-val">{Math.round(volume * 100)}%</span>
+              </div>
 
-            {/* Controls Row */}
-            <div className="controls-row">
-              {/* Left */}
-              <div className="controls-left">
-                <button className="ctrl-btn" onClick={togglePlay} title={playing ? 'Dừng' : 'Phát'}>
-                  {playing ? <Pause /> : <Play />}
-                </button>
-                <button className="ctrl-btn" onClick={() => seek(-10)} title="Tua lùi 10s">
+              {/* ---- CENTER CONTROLS ---- */}
+              <div className="player-center-controls" style={{ opacity: hovering ? 1 : 0 }}>
+                <button className="center-skip-btn" onClick={() => seek(-10)} title="Tua lùi 10s">
                   <SkipBack />
+                  <span>10s</span>
                 </button>
-                <button className="ctrl-btn" onClick={() => seek(10)} title="Tua tới 10s">
+                <button className="center-play-btn" onClick={togglePlay} title={playing ? 'Dừng (Space)' : 'Phát (Space)'}>
+                  {playing ? <Pause fill="white" /> : <Play fill="white" />}
+                </button>
+                <button className="center-skip-btn" onClick={() => seek(10)} title="Tua tiếp 10s">
                   <SkipForward />
+                  <span>10s</span>
                 </button>
-                <button className="ctrl-btn" onClick={toggleMute} title={muted ? 'Bật âm thanh' : 'Tắt tiếng'}>
-                  {muted ? <VolumeX /> : <Volume2 />}
-                </button>
-                <span className="time-display">
-                  {formatTime(currentT)} <span className="sep">/</span> <span className="total">{formatTime(activeDuration)}</span>
-                </span>
               </div>
 
-              {/* Right */}
-              <div className="controls-right">
-                {/* Subtitles */}
-                {subtitles.length > 0 && (
-                  <div className="ctrl-popup-wrapper">
-                    <button className="ctrl-btn" title="Phụ đề">
-                      <Subtitles />
-                    </button>
-                    <div className="ctrl-popup">
-                      <span className="ctrl-popup-label">Chọn Phụ đề</span>
-                      {subtitles.map(sub => (
-                        <button key={sub.id} className="ctrl-popup-item" onClick={() => loadSubtitle(sub)}>
-                          {sub.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Speed */}
-                <div className="ctrl-popup-wrapper">
-                  <button className="ctrl-btn" title="Tốc độ phát">
-                    <Gauge />
-                  </button>
-                  <div className="ctrl-popup">
-                    <span className="ctrl-popup-label">Tốc độ phát</span>
-                    {SPEEDS.map(s => (
-                      <button
-                        key={s}
-                        className={`ctrl-popup-item ${speed === s ? 'selected' : ''}`}
-                        onClick={() => setPlaySpeed(s)}
-                      >
-                        {s === 1 ? '1x (Bình thường)' : `${s}x`}
-                      </button>
-                    ))}
+              {/* ---- BOTTOM CONTROLS ---- */}
+              <div className="player-controls" style={{ opacity: hovering ? 1 : 0 }}>
+                {/* Scrubber */}
+                <div className="scrubber-row">
+                  <div
+                    className="scrubber-bg"
+                    onClick={handleScrubberClick}
+                    role="progressbar"
+                    aria-valuenow={progress}
+                    aria-label="Thanh tiến trình video"
+                  >
+                    <div className="scrubber-buffer" style={{ width: `${bufferPct}%` }} />
+                    <div className="scrubber-fill"   style={{ width: `${progress}%`  }} />
+                    <div className="scrubber-thumb"  style={{ left:  `${progress}%`  }} />
                   </div>
                 </div>
 
-                {/* Fullscreen */}
-                <button className="ctrl-btn" onClick={handleFullscreen} title="Toàn màn hình (F)">
-                  <Maximize2 />
-                </button>
-              </div>
-            </div>
-          </div>
+                {/* Controls Row */}
+                <div className="controls-row">
+                  {/* Left */}
+                  <div className="controls-left">
+                    <button className="ctrl-btn" onClick={togglePlay} title={playing ? 'Dừng' : 'Phát'}>
+                      {playing ? <Pause /> : <Play />}
+                    </button>
+                    <button className="ctrl-btn" onClick={() => seek(-10)} title="Tua lùi 10s">
+                      <SkipBack />
+                    </button>
+                    <button className="ctrl-btn" onClick={() => seek(10)} title="Tua tới 10s">
+                      <SkipForward />
+                    </button>
+                    <button className="ctrl-btn" onClick={toggleMute} title={muted ? 'Bật âm thanh' : 'Tắt tiếng'}>
+                      {muted ? <VolumeX /> : <Volume2 />}
+                    </button>
+                    <span className="time-display">
+                      {formatTime(currentT)} <span className="sep">/</span> <span className="total">{formatTime(activeDuration)}</span>
+                    </span>
+                  </div>
 
-          {/* Click center to play/pause — z-index 8: above video (1), below controls (11+) */}
-          <div
-            style={{ position:'absolute', inset:0, zIndex: 8 }}
-            onDoubleClick={handleFullscreen}
-            onClick={togglePlay}
-          />
+                  {/* Right */}
+                  <div className="controls-right">
+                    {/* Subtitles */}
+                    {subtitles.length > 0 && (
+                      <div className="ctrl-popup-wrapper">
+                        <button className="ctrl-btn" title="Phụ đề">
+                          <Subtitles />
+                        </button>
+                        <div className="ctrl-popup">
+                          <span className="ctrl-popup-label">Chọn Phụ đề</span>
+                          {subtitles.map(sub => (
+                            <button key={sub.id} className="ctrl-popup-item" onClick={() => loadSubtitle(sub)}>
+                              {sub.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Speed */}
+                    <div className="ctrl-popup-wrapper">
+                      <button className="ctrl-btn" title="Tốc độ phát">
+                        <Gauge />
+                      </button>
+                      <div className="ctrl-popup">
+                        <span className="ctrl-popup-label">Tốc độ phát</span>
+                        {SPEEDS.map(s => (
+                          <button
+                            key={s}
+                            className={`ctrl-popup-item ${speed === s ? 'selected' : ''}`}
+                            onClick={() => setPlaySpeed(s)}
+                          >
+                            {s === 1 ? '1x (Bình thường)' : `${s}x`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Fullscreen */}
+                    <button className="ctrl-btn" onClick={handleFullscreen} title="Toàn màn hình (F)">
+                      <Maximize2 />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Click center to play/pause — z-index 8: above video (1), below controls (11+) */}
+              <div
+                style={{ position:'absolute', inset:0, zIndex: 8 }}
+                onDoubleClick={handleFullscreen}
+                onClick={togglePlay}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>
