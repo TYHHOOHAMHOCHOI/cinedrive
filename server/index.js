@@ -4,28 +4,36 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-let ffmpegPath = require('ffmpeg-static');
+/**
+ * Tìm đòn bẩy binary FFmpeg ở mọi vị trí khả thi trên Azure Linux / Windows / Local
+ */
+function findFfmpegBinary() {
+  const staticPath = require('ffmpeg-static');
+  const candidates = [
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+    staticPath ? path.resolve(staticPath) : null,
+    staticPath && staticPath.startsWith('/') ? path.join(__dirname, staticPath) : null,
+    staticPath && staticPath.startsWith('/') ? path.join(process.cwd(), staticPath) : null,
+  ];
 
-if (ffmpegPath) {
-  // Sửa lỗi Linux path: ffmpeg-static trả về "/node_modules/..." khiến Node tưởng ở root /
-  if (ffmpegPath.startsWith('/node_modules') || !fs.existsSync(ffmpegPath)) {
-    const cwdPath = path.join(process.cwd(), ffmpegPath.replace(/^\//, ''));
-    if (fs.existsSync(cwdPath)) {
-      ffmpegPath = cwdPath;
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      try {
+        if (process.platform !== 'win32') {
+          fs.chmodSync(candidate, '755');
+        }
+      } catch (_) {}
+      return candidate;
     }
   }
-  ffmpegPath = path.resolve(ffmpegPath);
-  console.log('[FFmpeg] Binary Path chuẩn hóa:', ffmpegPath);
-
-  try {
-    if (process.platform !== 'win32' && fs.existsSync(ffmpegPath)) {
-      fs.chmodSync(ffmpegPath, '755');
-      console.log('[FFmpeg] chmod 755 thành công!');
-    }
-  } catch (err) {
-    console.warn('[FFmpeg] Không thể chmod 755:', err.message);
-  }
+  return 'ffmpeg'; // Fallback về system ffmpeg
 }
+
+const ffmpegExecutable = findFfmpegBinary();
+console.log('[FFmpeg] Found Binary Path:', ffmpegExecutable, 'Exists:', fs.existsSync(ffmpegExecutable));
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
@@ -36,8 +44,10 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     message: '🎬 CineDrive Transcoder is Running!',
-    ffmpegPath,
-    exists: ffmpegPath ? fs.existsSync(ffmpegPath) : false
+    ffmpegExecutable,
+    exists: fs.existsSync(ffmpegExecutable),
+    cwd: process.cwd(),
+    dirname: __dirname
   });
 });
 
@@ -52,22 +62,11 @@ app.get('/stream', (req, res) => {
     return res.status(400).json({ error: 'Thiếu fileId hoặc access_token' });
   }
 
-  // Tự động tìm fallback nếu ffmpegPath chưa sẵn sàng
-  let activeFfmpeg = ffmpegPath;
-  if (!activeFfmpeg || !fs.existsSync(activeFfmpeg)) {
-    const altPath = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-    if (fs.existsSync(altPath)) {
-      activeFfmpeg = altPath;
-    } else {
-      activeFfmpeg = 'ffmpeg'; // fallback về system ffmpeg
-    }
-  }
-
+  const activeFfmpeg = findFfmpegBinary();
   const inputUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
 
   console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}... dùng binary: ${activeFfmpeg}`);
 
-  // FFmpeg live transcode options: map optional (?) để không crash nếu không có audio stream
   const args = [
     '-headers', `Authorization: Bearer ${access_token}\r\n`,
     '-i', inputUrl,
@@ -84,8 +83,6 @@ app.get('/stream', (req, res) => {
     '-loglevel', 'warning',
     'pipe:1',
   ];
-
-  console.log('[FFmpeg] spawn:', activeFfmpeg);
 
   const ffmpeg = spawn(activeFfmpeg, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -118,7 +115,7 @@ app.get('/stream', (req, res) => {
   ffmpeg.on('error', (err) => {
     console.error('[FFmpeg spawn error]', err);
     if (!hasStartedSending && !res.headersSent) {
-      res.status(500).json({ error: `Lỗi khởi chạy FFmpeg: ${err.message}` });
+      res.status(500).json({ error: `Lỗi khởi chạy FFmpeg (${activeFfmpeg}): ${err.message}` });
     } else {
       res.end();
     }
