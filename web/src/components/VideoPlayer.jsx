@@ -48,16 +48,22 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     hideTimer.current = setTimeout(() => setHovering(false), 3500);
   }, []);
 
-  useEffect(() => {
-    if (!artRef.current || !movie) return;
+  const initPlayer = useCallback((url) => {
+    if (!artRef.current) return;
 
-    const streamUrl = driveApi.getStreamUrl(movie.id);
-    const saved     = HistoryService.getProgress(movie.id);
+    // Destroy old instance first
+    clearInterval(progressSave.current);
+    if (artInstance.current?.destroy) {
+      try { artInstance.current.destroy(false); } catch (_) {}
+    }
+    artInstance.current = null;
+
+    const saved = HistoryService.getProgress(movie.id);
 
     try {
       const art = new Artplayer({
         container:   artRef.current,
-        url:         streamUrl,
+        url,
         type:        'auto',
         title:       movie.name,
         volume:      0.8,
@@ -82,6 +88,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
         }
         art.play();
         setPlaying(true);
+        setError(null);
       });
 
       art.on('play',  () => setPlaying(true));
@@ -119,13 +126,21 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     } catch (err) {
       setError(err.message);
     }
+  }, [movie, driveApi]);
 
+  useEffect(() => {
+    if (!artRef.current || !movie) return;
+    const streamUrl = driveApi.getStreamUrl(movie.id);
+    initPlayer(streamUrl);
     return () => {
       clearInterval(progressSave.current);
       clearTimeout(hideTimer.current);
-      if (artInstance.current?.destroy) artInstance.current.destroy(false);
+      if (artInstance.current?.destroy) {
+        try { artInstance.current.destroy(false); } catch (_) {}
+      }
     };
   }, [movie, accessToken]);
+
 
   /* ---- Controls ---- */
   const togglePlay = () => {
@@ -241,10 +256,8 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                 <button
                   onClick={() => {
                     const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
-                    if (artInstance.current) {
-                      setError(null);
-                      artInstance.current.switchUrl(transcodeUrl);
-                    }
+                    setIsTranscode(true);
+                    initPlayer(transcodeUrl);
                   }}
                   style={{
                     background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
@@ -321,19 +334,15 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
               <span className="player-movie-title">{movie.name}</span>
               <button
                 onClick={() => {
-                  const art = artInstance.current;
-                  if (!art) return;
                   if (!isTranscode) {
                     const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
-                    art.switchUrl(transcodeUrl);
                     setIsTranscode(true);
-                    setError(null);
                     setShowStallHint(false);
+                    initPlayer(transcodeUrl);
                   } else {
                     const streamUrl = driveApi.getStreamUrl(movie.id);
-                    art.switchUrl(streamUrl);
                     setIsTranscode(false);
-                    setError(null);
+                    initPlayer(streamUrl);
                   }
                 }}
                 style={{
@@ -480,9 +489,9 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </div>
           </div>
 
-          {/* Click center to play/pause */}
+          {/* Click center to play/pause — z-index 8: above video (1), below controls (11+) */}
           <div
-            style={{ position:'absolute', inset:0, zIndex:5 }}
+            style={{ position:'absolute', inset:0, zIndex: 8 }}
             onDoubleClick={handleFullscreen}
             onClick={togglePlay}
           />
