@@ -30,6 +30,7 @@ jobs:
         run: |
           cd server
           npm install --production
+          node node_modules/ffmpeg-static/install.js || true
           zip -r ../server.zip .
 
       - name: Upload artifact for deployment job
