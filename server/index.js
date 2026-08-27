@@ -7,12 +7,20 @@ const fs = require('fs');
 let ffmpegPath = require('ffmpeg-static');
 
 if (ffmpegPath) {
+  // Sửa lỗi Linux path: ffmpeg-static trả về "/node_modules/..." khiến Node tưởng ở root /
+  if (ffmpegPath.startsWith('/node_modules') || !fs.existsSync(ffmpegPath)) {
+    const cwdPath = path.join(process.cwd(), ffmpegPath.replace(/^\//, ''));
+    if (fs.existsSync(cwdPath)) {
+      ffmpegPath = cwdPath;
+    }
+  }
   ffmpegPath = path.resolve(ffmpegPath);
-  console.log('[FFmpeg] Absolute Binary Path:', ffmpegPath);
+  console.log('[FFmpeg] Binary Path chuẩn hóa:', ffmpegPath);
+
   try {
     if (process.platform !== 'win32' && fs.existsSync(ffmpegPath)) {
       fs.chmodSync(ffmpegPath, '755');
-      console.log('[FFmpeg] chmod 755 thành công');
+      console.log('[FFmpeg] chmod 755 thành công!');
     }
   } catch (err) {
     console.warn('[FFmpeg] Không thể chmod 755:', err.message);
@@ -44,19 +52,24 @@ app.get('/stream', (req, res) => {
     return res.status(400).json({ error: 'Thiếu fileId hoặc access_token' });
   }
 
-  if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
-    return res.status(500).json({ error: 'FFmpeg binary không tồn tại trên server' });
+  // Tự động tìm fallback nếu ffmpegPath chưa sẵn sàng
+  let activeFfmpeg = ffmpegPath;
+  if (!activeFfmpeg || !fs.existsSync(activeFfmpeg)) {
+    const altPath = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    if (fs.existsSync(altPath)) {
+      activeFfmpeg = altPath;
+    } else {
+      activeFfmpeg = 'ffmpeg'; // fallback về system ffmpeg
+    }
   }
 
   const inputUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
 
-  console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}...`);
+  console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}... dùng binary: ${activeFfmpeg}`);
 
-  // FFmpeg speed optimizations: probesize 2M + analyzeduration 2M
+  // FFmpeg live transcode options: map optional (?) để không crash nếu không có audio stream
   const args = [
     '-headers', `Authorization: Bearer ${access_token}\r\n`,
-    '-probesize', '2M',
-    '-analyzeduration', '2M',
     '-i', inputUrl,
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
@@ -65,14 +78,16 @@ app.get('/stream', (req, res) => {
     '-c:a', 'aac',
     '-b:a', '128k',
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-map', '0:v:0',
-    '-map', '0:a:0',
+    '-map', '0:v:0?',
+    '-map', '0:a:0?',
     '-f', 'mp4',
     '-loglevel', 'warning',
     'pipe:1',
   ];
 
-  const ffmpeg = spawn(ffmpegPath, args, {
+  console.log('[FFmpeg] spawn:', activeFfmpeg);
+
+  const ffmpeg = spawn(activeFfmpeg, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
