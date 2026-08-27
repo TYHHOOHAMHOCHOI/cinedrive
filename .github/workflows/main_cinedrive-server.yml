@@ -23,14 +23,16 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: Install FFmpeg
-        run: sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg and bundle Linux binary
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          cp /usr/bin/ffmpeg server/ffmpeg
+          chmod +x server/ffmpeg
 
       - name: npm install and zip server directory
         run: |
           cd server
           npm install --production
-          node node_modules/ffmpeg-static/install.js || true
           zip -r ../server.zip .
 
       - name: Upload artifact for deployment job

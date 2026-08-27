@@ -9,31 +9,37 @@ const fs = require('fs');
  */
 function findFfmpegBinary() {
   const isWin = process.platform === 'win32';
-  const binName = isWin ? 'ffmpeg.exe' : 'ffmpeg';
-  const staticPath = require('ffmpeg-static');
 
-  const candidates = [
-    path.join(__dirname, 'node_modules', 'ffmpeg-static', binName),
-    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', binName),
-    staticPath ? path.resolve(staticPath) : null,
+  if (isWin) {
+    const staticPath = require('ffmpeg-static');
+    if (staticPath && fs.existsSync(staticPath)) return staticPath;
+    const candidates = [
+      path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+      path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return 'ffmpeg.exe';
+  }
+
+  // Môi trường Linux (Azure Web App)
+  const linuxCandidates = [
+    path.join(__dirname, 'ffmpeg'),
+    path.join(process.cwd(), 'ffmpeg'),
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
   ];
 
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) {
-      // Lọc bỏ file .exe nếu đang chạy trên Linux
-      if (!isWin && candidate.endsWith('.exe')) continue;
-      // Lọc bỏ file ELF nếu đang chạy trên Windows
-      if (isWin && !candidate.endsWith('.exe')) continue;
-
-      try {
-        if (!isWin) {
-          fs.chmodSync(candidate, '755');
-        }
-      } catch (_) {}
-      return candidate;
+  for (const c of linuxCandidates) {
+    if (fs.existsSync(c)) {
+      try { fs.chmodSync(c, '755'); } catch (_) {}
+      return c;
     }
   }
-  return 'ffmpeg'; // Fallback về system ffmpeg
+  return 'ffmpeg'; // Fallback về system ffmpeg trên Linux
 }
 
 const ffmpegExecutable = findFfmpegBinary();
