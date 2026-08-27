@@ -4,25 +4,26 @@
 
 export class GoogleAuthService {
   constructor(clientId, onTokenReceived, onError) {
-    this.clientId = clientId;
+    this.clientId = clientId || '855696341659-mbcn5sggdk9cvh4bm5jm1gkj2ekkdo9p.apps.googleusercontent.com';
     this.onTokenReceived = onTokenReceived;
     this.onError = onError;
     this.tokenClient = null;
     this.accessToken = localStorage.getItem('cinedrive_access_token') || null;
     this.userProfile = JSON.parse(localStorage.getItem('cinedrive_user_profile') || 'null');
+    
+    // Tự động khởi tạo
+    this.init();
   }
 
   /**
    * Khởi tạo Google Token Client
    */
   init() {
-    if (typeof window === 'undefined' || !window.google) {
-      console.warn('Google Identity Services SDK chưa sẵn sàng.');
-      return;
-    }
+    if (typeof window === 'undefined') return;
 
-    if (!this.clientId) {
-      console.warn('Chưa cấu hình Google Client ID.');
+    if (!window.google || !window.google.accounts) {
+      // Đợi SDK tải xong
+      setTimeout(() => this.init(), 500);
       return;
     }
 
@@ -34,6 +35,7 @@ export class GoogleAuthService {
           if (response.error) {
             console.error('Google Auth Error:', response);
             if (this.onError) this.onError(response);
+            alert(`Lỗi xác thực Google: ${response.error_description || response.error}`);
             return;
           }
 
@@ -56,16 +58,41 @@ export class GoogleAuthService {
   }
 
   /**
-   * Kích hoạt popup đăng nhập Google
+   * Kích hoạt đăng nhập Google
    */
   signIn() {
     if (!this.tokenClient) {
       this.init();
     }
     if (this.tokenClient) {
-      this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      try {
+        // Dùng prompt: 'select_account' thay vì 'consent' để không bị khóa trên trình duyệt di động
+        this.tokenClient.requestAccessToken({ prompt: 'select_account' });
+      } catch (err) {
+        console.error('Không thể mở popup Google Sign-In:', err);
+        this.fallbackTokenPrompt();
+      }
     } else {
-      alert('Vui lòng kiểm tra lại Google Client ID hoặc kết nối mạng.');
+      this.fallbackTokenPrompt();
+    }
+  }
+
+  /**
+   * Nhập Access Token thủ công nếu popup bị trình duyệt chặn
+   */
+  fallbackTokenPrompt() {
+    const manualToken = prompt('Nhập Access Token Google Drive của bạn (hoặc đăng nhập lại trên web):');
+    if (manualToken && manualToken.trim()) {
+      const cleanToken = manualToken.trim();
+      this.accessToken = cleanToken;
+      localStorage.setItem('cinedrive_access_token', cleanToken);
+      this.fetchUserProfile(cleanToken).then(profile => {
+        this.userProfile = profile;
+        localStorage.setItem('cinedrive_user_profile', JSON.stringify(profile));
+        if (this.onTokenReceived) {
+          this.onTokenReceived(cleanToken, profile);
+        }
+      });
     }
   }
 
@@ -74,9 +101,13 @@ export class GoogleAuthService {
    */
   signOut() {
     if (this.accessToken && window.google?.accounts?.oauth2) {
-      window.google.accounts.oauth2.revoke(this.accessToken, () => {
-        console.log('Token revoked.');
-      });
+      try {
+        window.google.accounts.oauth2.revoke(this.accessToken, () => {
+          console.log('Token revoked.');
+        });
+      } catch (e) {
+        console.warn(e);
+      }
     }
     this.accessToken = null;
     this.userProfile = null;
