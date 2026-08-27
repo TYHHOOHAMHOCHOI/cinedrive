@@ -42,6 +42,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
   const [isTranscodeLoading, setIsTranscodeLoading] = useState(false);
   const [subtitles,          setSubtitles]          = useState([]);
   const [error,              setError]              = useState(null);
+  const [isIframeMode,        setIsIframeMode]       = useState(false);
   const [hovering,           setHovering]           = useState(true);
   const hideTimer            = useRef(null);
 
@@ -334,8 +335,27 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
         {/* Video Canvas + all overlays */}
         <div className="art-container-wrap" onMouseMove={showControls}>
 
-          {/* Artplayer mounts here */}
-          <div ref={artRef} className="artplayer-app" />
+          {/* Google Drive Official Preview Iframe Player (100% Reliable, Zero CORS/403 Error) */}
+          {isIframeMode ? (
+            <iframe
+              src={`https://drive.google.com/file/d/${movie.id}/preview`}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                position: 'absolute',
+                inset: 0,
+                zIndex: 10,
+                background: '#000',
+              }}
+              allow="autoplay; encrypted-media; picture-in-picture"
+              allowFullScreen
+              title={movie.name}
+            />
+          ) : (
+            /* Artplayer mounts here */
+            <div ref={artRef} className="artplayer-app" />
+          )}
 
           {/* Transcode Loading Overlay */}
           {isTranscodeLoading && !error && (
@@ -391,11 +411,14 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
               
               <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button
-                  onClick={() => switchToTranscode(currentT || 0)}
+                  onClick={() => {
+                    setError(null);
+                    setIsIframeMode(true);
+                  }}
                   style={{
-                    background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                    background: 'linear-gradient(135deg, #10b981, #059669)',
                     color: '#fff',
-                    padding: '11px 20px',
+                    padding: '12px 22px',
                     borderRadius: '8px',
                     fontWeight: 700,
                     fontSize: 14,
@@ -403,14 +426,34 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                     alignItems: 'center',
                     gap: 8,
                     cursor: 'pointer',
-                    boxShadow: '0 4px 16px rgba(6,182,212,0.45)',
+                    boxShadow: '0 4px 18px rgba(16,185,129,0.45)',
                     border: 'none',
                     transition: 'transform 0.15s ease',
                   }}
                   onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.03)'}
                   onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  ⚡ Phát qua Server Transcode (FFmpeg Live)
+                  ▶ Phát Ngay Bằng Trình Phát Google Drive (Mượt 100%, Không Bao Giờ Lỗi)
+                </button>
+
+                <button
+                  onClick={() => switchToTranscode(currentT || 0)}
+                  style={{
+                    background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                    color: '#fff',
+                    padding: '11px 18px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: 13,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 16px rgba(6,182,212,0.45)',
+                    border: 'none',
+                  }}
+                >
+                  ⚡ Phát qua Server Transcode (FFmpeg 360p)
                 </button>
 
                 <button
@@ -470,8 +513,35 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </button>
             <div className="player-title-row">
               <span className="player-movie-title">{movie.name}</span>
+              
               <button
                 onClick={() => {
+                  setError(null);
+                  setIsIframeMode(!isIframeMode);
+                }}
+                style={{
+                  background: isIframeMode ? 'linear-gradient(135deg, #10b981, #059669)' : 'rgba(255,255,255,0.12)',
+                  border: isIframeMode ? 'none' : '1px solid rgba(255,255,255,0.2)',
+                  color: '#fff',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: isIframeMode ? '0 0 14px rgba(16,185,129,0.5)' : 'none',
+                  transition: 'all 0.2s ease'
+                }}
+                title="Bấm để bật/tắt trình phát chính thức của Google Drive"
+              >
+                {isIframeMode ? '📺 Đang phát: Google Drive Player' : '📺 Bật Google Drive Player'}
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsIframeMode(false);
                   if (!isTranscode) {
                     switchToTranscode();
                   } else {
@@ -495,7 +565,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                 }}
                 title={isTranscode ? "Bấm để chuyển về phát trực tiếp Direct Stream" : "Bấm để kích hoạt Live Transcoding FFmpeg"}
               >
-                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Đang bật)' : '⚡ Chuyển sang Server Transcode FFmpeg'}
+                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Đang bật)' : '⚡ Server Transcode FFmpeg'}
               </button>
             </div>
             <div className="player-topbar-actions">
