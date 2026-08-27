@@ -33,10 +33,13 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
   const [muted,      setMuted]       = useState(false);
   const [brightness, setBrightness]  = useState(80);
   const [speed,      setSpeed]       = useState(1);
+  const [isTranscode, setIsTranscode] = useState(false);
   const [subtitles,  setSubtitles]   = useState([]);
   const [error,      setError]       = useState(null);
   const [hovering,   setHovering]    = useState(true);
+  const [showStallHint, setShowStallHint] = useState(false);
   const hideTimer    = useRef(null);
+  const stallTimer   = useRef(null);
 
   // Auto-hide controls
   const showControls = useCallback(() => {
@@ -316,7 +319,41 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </button>
             <div className="player-title-row">
               <span className="player-movie-title">{movie.name}</span>
-              <span className="stream-badge">Drive HTTP 206 Stream</span>
+              <button
+                onClick={() => {
+                  const art = artInstance.current;
+                  if (!art) return;
+                  if (!isTranscode) {
+                    const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
+                    art.switchUrl(transcodeUrl);
+                    setIsTranscode(true);
+                    setError(null);
+                    setShowStallHint(false);
+                  } else {
+                    const streamUrl = driveApi.getStreamUrl(movie.id);
+                    art.switchUrl(streamUrl);
+                    setIsTranscode(false);
+                    setError(null);
+                  }
+                }}
+                style={{
+                  background: isTranscode ? 'linear-gradient(135deg, #06b6d4, #0891b2)' : 'rgba(255,255,255,0.12)',
+                  border: isTranscode ? 'none' : '1px solid rgba(255,255,255,0.2)',
+                  color: '#fff',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  boxShadow: isTranscode ? '0 0 12px rgba(6,182,212,0.5)' : 'none',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Bật)' : '⚡ Đổi sang Server Transcode FFmpeg'}
+              </button>
             </div>
             <div className="player-topbar-actions">
               <button className="player-icon-btn" onClick={handlePiP} title="Picture in Picture">

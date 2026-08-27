@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const { google } = require('googleapis');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 
@@ -9,13 +8,20 @@ if (ffmpegPath) {
 }
 
 const app = express();
-app.use(cors());
+
+// CORS rộng: cho phép tất cả origin (local dev + Azure + Vercel)
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'HEAD', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type'],
+}));
 
 const PORT = process.env.PORT || 3001;
 
-// Health check endpoint
+// Health check
 app.get('/', (req, res) => {
-  res.send('🎬 CineDrive Transcoder Server is Running!');
+  res.json({ status: 'ok', message: '🎬 CineDrive Transcoder Server is Running!' });
 });
 
 /**
@@ -26,47 +32,58 @@ app.get('/stream', async (req, res) => {
   const { fileId, access_token } = req.query;
 
   if (!fileId || !access_token) {
-    return res.status(400).send('Thiếu fileId hoặc access_token');
+    return res.status(400).json({ error: 'Thiếu fileId hoặc access_token' });
   }
 
   try {
     const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`;
 
-    // Cấu hình Header phản hồi dạng mp4 stream
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'bytes');
+    console.log(`[Transcode] Bắt đầu encode: ${fileId}`);
 
-    // Chạy FFmpeg live transcode sang H.264 + AAC chuẩn Web
+    // Thiết lập headers cho phép trình duyệt nhận stream MP4 ngay lập tức
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // FFmpeg live transcode: BD-Bluray/10-bit → H.264/AAC 8-bit chuẩn Web
     ffmpeg(driveUrl)
-      .inputOptions([
-        '-re', // Đọc luồng theo thời gian thực
-      ])
+      .inputOptions(['-re'])
       .videoCodec('libx264')
       .audioCodec('aac')
       .outputOptions([
-        '-preset ultrafast',  // Encode siêu nhanh giảm độ trễ
-        '-tune zerolatency',  // Độ trễ gần như bằng 0
-        '-movflags frag_keyframe+empty_moov', // Hỗ trợ phát ngay lập tức trên HTML5
-        '-pix_fmt yuv420p',   // Chuẩn màu 8-bit mọi trình duyệt xem được
+        '-preset ultrafast',
+        '-tune zerolatency',
+        '-movflags frag_keyframe+empty_moov+default_base_moof',
+        '-pix_fmt yuv420p',
+        '-crf 23',
+        '-maxrate 4M',
+        '-bufsize 8M',
       ])
       .format('mp4')
       .on('start', (cmd) => {
-        console.log('Bắt đầu Transcode FFmpeg:', cmd);
+        console.log('[FFmpeg] Lệnh:', cmd.substring(0, 120) + '...');
+      })
+      .on('progress', (p) => {
+        process.stdout.write(`\r[FFmpeg] Frame: ${p.frames} | FPS: ${p.currentFps} | Speed: ${p.currentKbps}kbps`);
       })
       .on('error', (err) => {
-        console.error('Lỗi FFmpeg Transcode:', err.message);
-        if (!res.headersSent) {
-          res.status(500).send('Lỗi Encode Video');
-        }
+        console.error('\n[FFmpeg] Lỗi:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+      })
+      .on('end', () => {
+        console.log('\n[FFmpeg] Encode hoàn thành.');
       })
       .pipe(res, { end: true });
 
   } catch (err) {
-    console.error('Lỗi Server:', err);
-    res.status(500).send('Lỗi Server Transcode');
+    console.error('[Server] Lỗi:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server CineDrive Transcoder đang chạy tại port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🎬 Server CineDrive Transcoder đang chạy tại port ${PORT}`);
+  console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`   Lắng nghe mọi kết nối (0.0.0.0)\n`);
 });
