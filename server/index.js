@@ -84,9 +84,10 @@ app.get('/proxy', async (req, res) => {
 
   try {
     const https = require('https');
-    
-    // Sử dụng module https có sẵn của Node.js để bắt 302 Redirect từ Google Drive API
-    const redirectUrl = await new Promise((resolve, reject) => {
+    const { URL } = require('url');
+
+    // 1. Lấy link CDN chuyển hướng từ Google Drive API
+    const cdnUrlString = await new Promise((resolve, reject) => {
       const driveReq = https.request(
         `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
         {
@@ -94,12 +95,9 @@ app.get('/proxy', async (req, res) => {
           headers: { Authorization: `Bearer ${access_token}` }
         },
         (driveRes) => {
-          if (driveRes.statusCode === 302 || driveRes.statusCode === 303) {
-            resolve(driveRes.headers.location);
-          } else if (driveRes.headers.location) {
+          if (driveRes.headers.location) {
             resolve(driveRes.headers.location);
           } else {
-            // Trường hợp không trả về 302 location
             resolve(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`);
           }
         }
@@ -108,17 +106,63 @@ app.get('/proxy', async (req, res) => {
       driveReq.end();
     });
 
-    console.log(`[Proxy 302 Success] Redirecting fileId=${fileId.substring(0, 15)}...`);
-    
-    // Gắn Referrer-Policy để trình duyệt không gửi Referer domain Vercel lên Google CDN
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.redirect(302, redirectUrl);
+    console.log(`[Proxy Direct Stream] Fetching CDN for fileId=${fileId.substring(0, 15)}...`);
+
+    // 2. Tải luồng trực tiếp từ Google CDN và truyền thẳng về client (Forwarding Range headers)
+    const targetUrl = new URL(cdnUrlString);
+    const cdnHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    };
+
+    if (req.headers.range) {
+      cdnHeaders['Range'] = req.headers.range;
+    }
+
+    const cdnReq = https.request(
+      targetUrl,
+      { method: 'GET', headers: cdnHeaders },
+      (cdnRes) => {
+        const outHeaders = {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+          'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=3600',
+        };
+
+        if (cdnRes.headers['content-type']) {
+          outHeaders['Content-Type'] = cdnRes.headers['content-type'];
+        }
+        if (cdnRes.headers['content-length']) {
+          outHeaders['Content-Length'] = cdnRes.headers['content-length'];
+        }
+        if (cdnRes.headers['content-range']) {
+          outHeaders['Content-Range'] = cdnRes.headers['content-range'];
+        }
+
+        res.writeHead(cdnRes.statusCode || 206, outHeaders);
+        cdnRes.pipe(res);
+
+        req.on('close', () => {
+          try { cdnRes.destroy(); } catch (_) {}
+        });
+      }
+    );
+
+    cdnReq.on('error', (err) => {
+      console.error('[CDN Stream Error]', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Lỗi kết nối tới Google CDN' });
+      }
+    });
+
+    cdnReq.end();
 
   } catch (err) {
     console.error('[Proxy Error]', err.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message || 'Lỗi khi lấy link trực tiếp từ Google Drive' });
+      res.status(500).json({ error: err.message || 'Lỗi khi kết nối tới Google Drive' });
     }
   }
 });

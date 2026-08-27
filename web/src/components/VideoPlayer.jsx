@@ -348,21 +348,42 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
 
           {/* Google Drive Official Preview Iframe Player (100% Reliable, Zero CORS/403 Error) */}
           {isIframeMode ? (
-            <iframe
-              src={`https://drive.google.com/file/d/${movie.id}/preview`}
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                position: 'absolute',
-                inset: 0,
-                zIndex: 10,
-                background: '#000',
-              }}
-              allow="autoplay; encrypted-media; picture-in-picture"
-              allowFullScreen
-              title={movie.name}
-            />
+            <div style={{ position: 'absolute', inset: 0, zIndex: 30, background: '#000' }}>
+              <button
+                onClick={onClose}
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  zIndex: 50,
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.7)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+                title="Đóng (Esc)"
+              >
+                <X size={18} />
+              </button>
+              <iframe
+                src={`https://drive.google.com/file/d/${movie.id}/preview`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  background: '#000',
+                }}
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                title={movie.name}
+              />
+            </div>
           ) : (
             /* Artplayer mounts here */
             <div ref={artRef} className="artplayer-app" />
@@ -514,80 +535,75 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
             </div>
           )}
 
-          {/* ---- TOP BAR ---- */}
-          <div className="player-topbar" style={{ opacity: hovering ? 1 : 0 }}>
-            <button className="player-back-btn" onClick={onClose} title="Đóng (Esc)">
-              <ArrowLeft />
-            </button>
-            <div className="player-title-row">
-              <span className="player-movie-title">{movie.name}</span>
-              
-              <button
-                onClick={() => {
-                  if (isIframeMode) {
-                    switchToDirect();
-                  } else {
-                    enableIframeMode();
-                  }
-                }}
-                style={{
-                  background: isIframeMode ? 'linear-gradient(135deg, #10b981, #059669)' : 'rgba(255,255,255,0.12)',
-                  border: isIframeMode ? 'none' : '1px solid rgba(255,255,255,0.2)',
-                  color: '#fff',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  padding: '5px 12px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: isIframeMode ? '0 0 14px rgba(16,185,129,0.5)' : 'none',
-                  transition: 'all 0.2s ease'
-                }}
-                title="Bấm để bật/tắt trình phát chính thức của Google Drive"
-              >
-                {isIframeMode ? '📺 Đang phát: Google Drive Player' : '📺 Bật Google Drive Player'}
+          {/* ---- TOP BAR (Chỉ hiển thị khi dùng Custom Player) ---- */}
+          {!isIframeMode && (
+            <div className="player-topbar" style={{ opacity: hovering ? 1 : 0 }}>
+              <button className="player-back-btn" onClick={onClose} title="Đóng (Esc)">
+                <ArrowLeft />
               </button>
+              <div className="player-title-row">
+                <span className="player-movie-title">{movie.name}</span>
+                
+                <button
+                  onClick={enableIframeMode}
+                  style={{
+                    background: 'rgba(255,255,255,0.12)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    color: '#fff',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '5px 12px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.2s ease'
+                  }}
+                  title="Bấm để bật trình phát chính thức của Google Drive"
+                >
+                  📺 Trình phát Google Drive
+                </button>
 
-              <button
-                onClick={() => {
-                  setIsIframeMode(false);
-                  if (!isTranscode) {
-                    switchToTranscode();
-                  } else {
-                    switchToDirect();
-                  }
-                }}
-                style={{
-                  background: isTranscode ? 'linear-gradient(135deg, #06b6d4, #0891b2)' : 'rgba(255,255,255,0.12)',
-                  border: isTranscode ? 'none' : '1px solid rgba(255,255,255,0.2)',
-                  color: '#fff',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  padding: '5px 12px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: isTranscode ? '0 0 14px rgba(6,182,212,0.5)' : 'none',
-                  transition: 'all 0.2s ease'
-                }}
-                title={isTranscode ? "Bấm để chuyển về phát trực tiếp Direct Stream" : "Bấm để kích hoạt Live Transcoding FFmpeg"}
-              >
-                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Đang bật)' : '⚡ Server Transcode FFmpeg'}
-              </button>
+                <button
+                  onClick={() => {
+                    setIsIframeMode(false);
+                    if (!isTranscode) {
+                      switchToTranscode();
+                    } else {
+                      switchToDirect();
+                    }
+                  }}
+                  style={{
+                    background: isTranscode ? 'linear-gradient(135deg, #06b6d4, #0891b2)' : 'rgba(255,255,255,0.12)',
+                    border: isTranscode ? 'none' : '1px solid rgba(255,255,255,0.2)',
+                    color: '#fff',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '5px 12px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: isTranscode ? '0 0 14px rgba(6,182,212,0.5)' : 'none',
+                    transition: 'all 0.2s ease'
+                  }}
+                  title={isTranscode ? "Bấm để chuyển về phát trực tiếp Direct Stream" : "Bấm để kích hoạt Live Transcoding FFmpeg"}
+                >
+                  {isTranscode ? '⚡ Transcode (Đang bật)' : '⚡ Transcode FFmpeg'}
+                </button>
+              </div>
+              <div className="player-topbar-actions">
+                <button className="player-icon-btn" onClick={handlePiP} title="Picture in Picture">
+                  <PictureInPicture2 />
+                </button>
+                <button className="player-icon-btn close-btn" onClick={onClose} title="Đóng">
+                  <X />
+                </button>
+              </div>
             </div>
-            <div className="player-topbar-actions">
-              <button className="player-icon-btn" onClick={handlePiP} title="Picture in Picture">
-                <PictureInPicture2 />
-              </button>
-              <button className="player-icon-btn close-btn" onClick={onClose} title="Đóng">
-                <X />
-              </button>
-            </div>
-          </div>
+          )}
 
           {/* ---- GESTURE HUDs (Chỉ dùng cho Custom Player) ---- */}
           {!isIframeMode && (
