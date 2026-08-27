@@ -155,7 +155,7 @@ export class DriveApiService {
   }
 
   /**
-   * Tạo Direct Stream URL qua local proxy /drive-proxy
+   * Tạo Direct Stream URL (Hỗ trợ Local Proxy & Azure Streaming Proxy trên Vercel)
    */
   getStreamUrl(fileId) {
     if (!this.accessToken || !fileId) return '';
@@ -163,7 +163,9 @@ export class DriveApiService {
     if (isLocal) {
       return `/drive-proxy/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
     }
-    return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
+    const defaultServer = 'https://cinedrive-server-fad2fbfnf7gdefgm.japaneast-01.azurewebsites.net';
+    const serverBase = import.meta.env.VITE_TRANSCODER_SERVER_URL || defaultServer;
+    return `${serverBase}/proxy?fileId=${fileId}&access_token=${this.accessToken}`;
   }
 
   /**

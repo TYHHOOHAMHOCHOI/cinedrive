@@ -3,6 +3,7 @@ const cors = require('cors');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { google } = require('googleapis');
 
 /**
  * Tìm binary FFmpeg chuẩn theo HĐH
@@ -50,11 +51,14 @@ app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
 
 const PORT = process.env.PORT || 3001;
 
+/**
+ * Endpoint kiểm tra trạng thái hoạt động của server
+ */
 app.get('/', (req, res) => {
   const bin = findFfmpegBinary();
   res.json({
     status: 'ok',
-    message: '🎬 CineDrive Transcoder is Running!',
+    message: '🎬 CineDrive Transcoder & Proxy Server is Running!',
     ffmpegExecutable: bin,
     platform: process.platform,
     exists: fs.existsSync(bin),
@@ -67,47 +71,71 @@ app.get('/health', (req, res) => {
 });
 
 /**
- * Hàm giải quyết URL tải trực tiếp từ Google Drive (Google CDN Signed URL)
- * Tránh lỗi header Authorization bị chặn hoặc lỗi redirect 302 trong FFmpeg
+ * GET /proxy?fileId=...&access_token=...
+ * Streaming Proxy trực tiếp từ Google Drive có hỗ trợ HTTP Range Requests
+ * Giải quyết triệt để lỗi CORS & 403 Forbidden của Google Drive khi chạy trên Web (Vercel)
  */
-async function resolveGoogleDriveStreamUrl(fileId, accessToken) {
-  const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+app.get('/proxy', async (req, res) => {
+  const { fileId, access_token } = req.query;
+
+  if (!fileId || !access_token) {
+    return res.status(400).json({ error: 'Thiếu fileId hoặc access_token' });
+  }
+
   try {
-    const response = await fetch(driveUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-      redirect: 'manual', // Bắt redirect 302/303/307 để lấy Location trực tiếp
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token });
+    const drive = google.drive({ version: 'v3', auth });
+
+    const rangeHeader = req.headers.range;
+    console.log(`[Proxy] Direct stream: fileId=${fileId.substring(0, 15)}... Range=${rangeHeader || 'All'}`);
+
+    const driveRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      {
+        responseType: 'stream',
+        headers: rangeHeader ? { Range: rangeHeader } : {},
+      }
+    );
+
+    const status = driveRes.status || 200;
+    const headers = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
+      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+    };
+
+    if (driveRes.headers['content-type']) {
+      headers['Content-Type'] = driveRes.headers['content-type'];
+    }
+    if (driveRes.headers['content-length']) {
+      headers['Content-Length'] = driveRes.headers['content-length'];
+    }
+    if (driveRes.headers['content-range']) {
+      headers['Content-Range'] = driveRes.headers['content-range'];
+    }
+
+    res.writeHead(status, headers);
+    driveRes.data.pipe(res);
+
+    req.on('close', () => {
+      try { driveRes.data.destroy(); } catch (_) {}
     });
 
-    // Nếu trả về redirect (302/303/307), lấy direct URL của Google CDN
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (location) {
-        return {
-          directUrl: location,
-          useAuthHeader: false,
-        };
-      }
-    }
-
-    // Nếu Google Drive trả về stream trực tiếp không redirect
-    if (response.ok) {
-      return {
-        directUrl: driveUrl,
-        useAuthHeader: true,
-      };
-    }
-
-    const errText = await response.text();
-    console.error(`[GoogleDrive API Error ${response.status}]`, errText);
-    return { error: `Google Drive API error: ${response.status}`, statusCode: response.status };
+    driveRes.data.on('error', (err) => {
+      console.error('[Proxy Stream Error]', err);
+      if (!res.writableEnded) res.end();
+    });
   } catch (err) {
-    console.error('[GoogleDrive Fetch Error]', err);
-    return { error: err.message, statusCode: 500 };
+    console.error('[Proxy Error]', err.message);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ error: err.message || 'Lỗi khi tải stream từ Google Drive' });
+    }
   }
-}
+});
 
 /**
  * GET /stream?fileId=...&access_token=...&startTime=...
@@ -122,108 +150,121 @@ app.get('/stream', async (req, res) => {
   }
 
   const activeFfmpeg = findFfmpegBinary();
-  console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}... startTime=${startTime}s | Binary: ${activeFfmpeg}`);
+  console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 15)}... startTime=${startTime}s | Binary: ${activeFfmpeg}`);
 
-  // Giải quyết URL tải trực tiếp từ Google Drive
-  const resolved = await resolveGoogleDriveStreamUrl(fileId, access_token);
-  if (!resolved || resolved.error) {
-    return res.status(resolved?.statusCode || 500).json({
-      error: resolved?.error || 'Không thể lấy luồng video từ Google Drive.',
+  try {
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token });
+    const drive = google.drive({ version: 'v3', auth });
+
+    // Request stream trực tiếp từ Google Drive qua Google SDK
+    const driveRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    // Thiết lập HTTP headers phát luồng MP4 trực tiếp
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
+      'Connection': 'keep-alive',
     });
-  }
 
-  // Thiết lập HTTP headers phát luồng MP4 trực tiếp
-  res.writeHead(200, {
-    'Content-Type': 'video/mp4',
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-    'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
-    'Connection': 'keep-alive',
-  });
+    const args = [];
 
-  const args = [];
-
-  // Hỗ trợ tua nhanh / resume từ giây cụ thể qua HTTP Range seeking của FFmpeg
-  if (startTime > 0) {
-    args.push('-ss', String(startTime));
-  }
-
-  // Nếu không có redirect, thêm Authorization header
-  if (resolved.useAuthHeader) {
-    args.push('-headers', `Authorization: Bearer ${access_token}\r\n`);
-  }
-
-  // Đầu vào URL
-  args.push('-i', resolved.directUrl);
-
-  // Cấu hình mã hóa Video: Chuẩn H.264 8-bit YUV420P tương thích 100% trình duyệt
-  args.push(
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-tune', 'zerolatency',
-    '-pix_fmt', 'yuv420p',
-    '-crf', '23',
-    '-g', '60'
-  );
-
-  // Cấu hình mã hóa Audio: AAC Stereo 192k tương thích mọi thiết bị
-  args.push(
-    '-c:a', 'aac',
-    '-ac', '2',
-    '-b:a', '192k',
-    '-ar', '48000'
-  );
-
-  // Stream mapping: Chọn track video đầu tiên và track audio đầu tiên nếu có
-  args.push(
-    '-map', '0:v:0',
-    '-map', '0:a:0?'
-  );
-
-  // Định dạng Fragmented MP4 cho live streaming
-  args.push(
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    '-loglevel', 'warning',
-    'pipe:1'
-  );
-
-  console.log('[FFmpeg] Spawning FFmpeg with args:', args.filter(a => !a.startsWith('http') && !a.includes('Bearer')).join(' '));
-
-  const ffmpeg = spawn(activeFfmpeg, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  // Pipe đầu ra trực tiếp vào HTTP Response
-  ffmpeg.stdout.pipe(res);
-
-  ffmpeg.stderr.on('data', (data) => {
-    const msg = data.toString();
-    if (msg.includes('frame=') || msg.includes('fps=')) {
-      process.stdout.write('\r[FFmpeg] ' + msg.trim());
-    } else {
-      console.error('[FFmpeg stderr]', msg.trim());
+    // Hỗ trợ tua nhanh / resume từ giây cụ thể
+    if (startTime > 0) {
+      args.push('-ss', String(startTime));
     }
-  });
 
-  ffmpeg.on('error', (err) => {
-    console.error('[FFmpeg spawn error]', err);
-    if (!res.writableEnded) res.end();
-  });
+    // Nhận luồng video từ standard input (pipe:0)
+    args.push('-i', 'pipe:0');
 
-  ffmpeg.on('close', (code) => {
-    console.log(`\n[FFmpeg] Kết thúc process (code: ${code})`);
-    if (!res.writableEnded) res.end();
-  });
+    // Cấu hình mã hóa Video: Chuẩn H.264 8-bit YUV420P tương thích 100% trình duyệt
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-pix_fmt', 'yuv420p',
+      '-crf', '23',
+      '-g', '60'
+    );
 
-  // Khi trình duyệt ngắt kết nối hoặc tua/đổi video, huỷ tiến trình FFmpeg để giải phóng CPU
-  req.on('close', () => {
-    console.log('[Transcode] Client ngắt kết nối, giải phóng tiến trình FFmpeg');
-    try {
-      ffmpeg.kill('SIGKILL');
-    } catch (_) {}
-  });
+    // Cấu hình mã hóa Audio: AAC Stereo 192k tương thích mọi thiết bị
+    args.push(
+      '-c:a', 'aac',
+      '-ac', '2',
+      '-b:a', '192k',
+      '-ar', '48000'
+    );
+
+    // Stream mapping: Chọn track video đầu tiên và track audio đầu tiên nếu có
+    args.push(
+      '-map', '0:v:0',
+      '-map', '0:a:0?'
+    );
+
+    // Định dạng Fragmented MP4 cho live streaming
+    args.push(
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      '-loglevel', 'warning',
+      'pipe:1'
+    );
+
+    console.log('[FFmpeg] Spawning FFmpeg with args:', args.join(' '));
+
+    const ffmpeg = spawn(activeFfmpeg, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // Pipe Google Drive stream vào FFmpeg stdin
+    driveRes.data.pipe(ffmpeg.stdin);
+
+    // Pipe đầu ra FFmpeg stdout trực tiếp vào HTTP Response của client
+    ffmpeg.stdout.pipe(res);
+
+    ffmpeg.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('frame=') || msg.includes('fps=')) {
+        process.stdout.write('\r[FFmpeg] ' + msg.trim());
+      } else {
+        console.error('[FFmpeg stderr]', msg.trim());
+      }
+    });
+
+    ffmpeg.on('error', (err) => {
+      console.error('[FFmpeg spawn error]', err);
+      if (!res.writableEnded) res.end();
+    });
+
+    ffmpeg.on('close', (code) => {
+      console.log(`\n[FFmpeg] Kết thúc process (code: ${code})`);
+      if (!res.writableEnded) res.end();
+    });
+
+    driveRes.data.on('error', (err) => {
+      console.error('[Drive Stream error]', err);
+      try { ffmpeg.kill('SIGKILL'); } catch (_) {}
+      if (!res.writableEnded) res.end();
+    });
+
+    // Khi trình duyệt ngắt kết nối hoặc tua/đổi video, huỷ tiến trình FFmpeg để giải phóng CPU
+    req.on('close', () => {
+      console.log('[Transcode] Client ngắt kết nối, giải phóng tiến trình FFmpeg & Drive Stream');
+      try { driveRes.data.destroy(); } catch (_) {}
+      try { ffmpeg.kill('SIGKILL'); } catch (_) {}
+    });
+
+  } catch (err) {
+    console.error('[Transcode Error]', err.message);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ error: err.message || 'Lỗi khi khởi chạy Transcoder' });
+    }
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
