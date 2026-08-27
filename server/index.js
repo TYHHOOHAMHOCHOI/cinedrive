@@ -87,52 +87,34 @@ app.get('/proxy', async (req, res) => {
     auth.setCredentials({ access_token });
     const drive = google.drive({ version: 'v3', auth });
 
-    const rangeHeader = req.headers.range;
-    console.log(`[Proxy] Direct stream: fileId=${fileId.substring(0, 15)}... Range=${rangeHeader || 'All'}`);
-
-    const driveRes = await drive.files.get(
-      { fileId, alt: 'media' },
+    const axios = require('axios');
+    
+    // Gọi API lấy link alt=media, nhưng không follow redirect (maxRedirects: 0)
+    const response = await axios.get(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
       {
-        responseType: 'stream',
-        headers: rangeHeader ? { Range: rangeHeader } : {},
+        headers: { Authorization: `Bearer ${access_token}` },
+        maxRedirects: 0,
+        validateStatus: (status) => status >= 200 && status < 400
       }
     );
 
-    const status = driveRes.status || 200;
-    const headers = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-      'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
-      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'public, max-age=3600',
-    };
-
-    if (driveRes.headers['content-type']) {
-      headers['Content-Type'] = driveRes.headers['content-type'];
-    }
-    if (driveRes.headers['content-length']) {
-      headers['Content-Length'] = driveRes.headers['content-length'];
-    }
-    if (driveRes.headers['content-range']) {
-      headers['Content-Range'] = driveRes.headers['content-range'];
+    let redirectUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`;
+    if (response.status === 302 || response.status === 303) {
+      redirectUrl = response.headers.location;
     }
 
-    res.writeHead(status, headers);
-    driveRes.data.pipe(res);
+    // Thiết lập header no-referrer để bypass kiểm duyệt Referer của Google CDN
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    console.log(`[Proxy] Chuyển hướng (302) tới Google CDN cho fileId=${fileId.substring(0, 15)}...`);
+    return res.redirect(302, redirectUrl);
 
-    req.on('close', () => {
-      try { driveRes.data.destroy(); } catch (_) {}
-    });
-
-    driveRes.data.on('error', (err) => {
-      console.error('[Proxy Stream Error]', err);
-      if (!res.writableEnded) res.end();
-    });
   } catch (err) {
     console.error('[Proxy Error]', err.message);
     if (!res.headersSent) {
-      res.status(err.status || 500).json({ error: err.message || 'Lỗi khi tải stream từ Google Drive' });
+      res.status(err.status || 500).json({ error: err.message || 'Lỗi khi lấy link trực tiếp từ Google Drive' });
     }
   }
 });
@@ -183,14 +165,17 @@ app.get('/stream', async (req, res) => {
     // Nhận luồng video từ standard input (pipe:0)
     args.push('-i', 'pipe:0');
 
-    // Cấu hình mã hóa Video: Chuẩn H.264 8-bit YUV420P tương thích 100% trình duyệt
+    // Cấu hình mã hóa Video: Giảm phân giải xuống 720p để Azure Free Tier không bị quá tải CPU
     args.push(
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
       '-pix_fmt', 'yuv420p',
-      '-crf', '23',
-      '-g', '60'
+      '-vf', 'scale=-2:720', // Ép về 720p để giảm 50% CPU load
+      '-r', '24',            // Ép frame rate 24fps
+      '-crf', '28',          // Giảm chất lượng một chút để encode nhanh hơn
+      '-threads', '2',       // Giới hạn số luồng để không làm sập Azure App Service
+      '-g', '48'
     );
 
     // Cấu hình mã hóa Audio: AAC Stereo 192k tương thích mọi thiết bị
