@@ -26,16 +26,17 @@ jobs:
       - name: Install FFmpeg
         run: sudo apt-get install -y ffmpeg
 
-      - name: npm install in server directory
+      - name: npm install and zip server directory
         run: |
           cd server
           npm install --production
+          zip -r ../server.zip .
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: server/
+          path: server.zip
 
   deploy:
     runs-on: ubuntu-latest
@@ -53,5 +54,5 @@ jobs:
         with:
           app-name: 'cinedrive-server'
           slot-name: 'Production'
-          package: .
+          package: server.zip
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_87B8D7D21D044C42BC865994609A87F7 }}
