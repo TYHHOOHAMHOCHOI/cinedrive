@@ -146,7 +146,15 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
   const togglePlay = () => {
     const art = artInstance.current;
     if (!art) return;
-    art.toggle();
+    if (art.video) {
+      if (art.video.paused) {
+        art.video.play().catch(e => console.warn('Play error:', e));
+      } else {
+        art.video.pause();
+      }
+    } else {
+      art.toggle();
+    }
     showControls();
   };
 
