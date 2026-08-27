@@ -148,7 +148,7 @@ export class DriveApiService {
    * Lấy luồng nội dung file phụ đề và chuyển sang định dạng WebVTT
    */
   async fetchSubtitleContent(fileId) {
-    const url = `/drive-proxy/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
+    const url = this.getStreamUrl(fileId);
     const res = await fetch(url);
     if (!res.ok) return null;
     return await res.text();
@@ -159,7 +159,11 @@ export class DriveApiService {
    */
   getStreamUrl(fileId) {
     if (!this.accessToken || !fileId) return '';
-    return `/drive-proxy/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    if (isLocal) {
+      return `/drive-proxy/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
+    }
+    return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
   }
 
   /**
@@ -168,7 +172,11 @@ export class DriveApiService {
    */
   getTranscodeUrl(fileId) {
     if (!this.accessToken || !fileId) return '';
-    const serverBase = import.meta.env.VITE_TRANSCODER_SERVER_URL || 'http://localhost:3001';
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const defaultServer = isLocal
+      ? 'http://localhost:3001'
+      : 'https://cinedrive-server-fad2fbfnf7gdefgm.japaneast-01.azurewebsites.net';
+    const serverBase = import.meta.env.VITE_TRANSCODER_SERVER_URL || defaultServer;
     return `${serverBase}/stream?fileId=${fileId}&access_token=${this.accessToken}`;
   }
 }
