@@ -257,6 +257,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                   onClick={() => {
                     const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
                     setIsTranscode(true);
+                    setError(null);
                     initPlayer(transcodeUrl);
                   }}
                   style={{

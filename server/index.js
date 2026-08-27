@@ -9,7 +9,6 @@ let ffmpegPath = require('ffmpeg-static');
 if (ffmpegPath) {
   ffmpegPath = path.resolve(ffmpegPath);
   console.log('[FFmpeg] Absolute Binary Path:', ffmpegPath);
-  // Đảm bảo file có quyền chạy (executable) trên Linux (Azure Web App)
   try {
     if (process.platform !== 'win32' && fs.existsSync(ffmpegPath)) {
       fs.chmodSync(ffmpegPath, '755');
@@ -51,11 +50,13 @@ app.get('/stream', (req, res) => {
 
   const inputUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
 
-  console.log(`\n[Transcode] ▶ fileId=${fileId.substring(0, 20)}...`);
+  console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}...`);
 
-  // FFmpeg download trực tiếp từ Google Drive với Authorization header
+  // FFmpeg speed optimizations: probesize 2M + analyzeduration 2M
   const args = [
     '-headers', `Authorization: Bearer ${access_token}\r\n`,
+    '-probesize', '2M',
+    '-analyzeduration', '2M',
     '-i', inputUrl,
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
@@ -68,10 +69,8 @@ app.get('/stream', (req, res) => {
     '-map', '0:a:0',
     '-f', 'mp4',
     '-loglevel', 'warning',
-    'pipe:1',   // output ra stdout
+    'pipe:1',
   ];
-
-  console.log('[FFmpeg] spawn:', ffmpegPath);
 
   const ffmpeg = spawn(ffmpegPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -93,6 +92,7 @@ app.get('/stream', (req, res) => {
   ffmpeg.stdout.on('data', (chunk) => {
     if (!hasStartedSending) {
       hasStartedSending = true;
+      console.log('[Transcode] ⚡ Đã nhận dữ liệu đầu tiên từ FFmpeg! Gửi MP4 stream cho client.');
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Access-Control-Allow-Origin', '*');
