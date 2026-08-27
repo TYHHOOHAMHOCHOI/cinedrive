@@ -167,16 +167,20 @@ export class DriveApiService {
   }
 
   /**
-   * Tạo Transcode Stream URL gọi qua Server FFmpeg (Koyeb/Render/Local)
+   * Tạo Transcode Stream URL gọi qua Server FFmpeg (Azure/Local)
    * Giúp tự động Encode live phim 10-bit Bluray sang H.264/AAC chuẩn Web
    */
-  getTranscodeUrl(fileId) {
+  getTranscodeUrl(fileId, startTime = 0) {
     if (!this.accessToken || !fileId) return '';
     const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     const defaultServer = isLocal
       ? 'http://localhost:3001'
       : 'https://cinedrive-server-fad2fbfnf7gdefgm.japaneast-01.azurewebsites.net';
     const serverBase = import.meta.env.VITE_TRANSCODER_SERVER_URL || defaultServer;
-    return `${serverBase}/stream?fileId=${fileId}&access_token=${this.accessToken}`;
+    let url = `${serverBase}/stream?fileId=${fileId}&access_token=${this.accessToken}`;
+    if (startTime > 0) {
+      url += `&startTime=${Math.floor(startTime)}`;
+    }
+    return url;
   }
 }

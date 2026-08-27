@@ -4,7 +4,7 @@ import {
   ArrowLeft, X, Maximize2, Minimize2, PictureInPicture2,
   Play, Pause, SkipBack, SkipForward,
   Volume2, VolumeX, Sun, Subtitles, Gauge, AlertCircle,
-  Settings2
+  Loader2, Sparkles, RefreshCw
 } from 'lucide-react';
 import { HistoryService } from '../services/historyService';
 
@@ -21,25 +21,29 @@ function formatTime(sec) {
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
-  const artRef        = useRef(null);
-  const artInstance   = useRef(null);
-  const progressSave  = useRef(null);
+  const artRef            = useRef(null);
+  const artInstance       = useRef(null);
+  const progressSave      = useRef(null);
+  const transcodeOffsetRef= useRef(0);
 
-  const [playing,    setPlaying]    = useState(false);
-  const [currentT,   setCurrentT]   = useState(0);
-  const [duration,   setDuration]   = useState(0);
-  const [buffered,   setBuffered]    = useState(0);
-  const [volume,     setVolume]      = useState(0.8);
-  const [muted,      setMuted]       = useState(false);
-  const [brightness, setBrightness]  = useState(80);
-  const [speed,      setSpeed]       = useState(1);
-  const [isTranscode, setIsTranscode] = useState(false);
-  const [subtitles,  setSubtitles]   = useState([]);
-  const [error,      setError]       = useState(null);
-  const [hovering,   setHovering]    = useState(true);
-  const [showStallHint, setShowStallHint] = useState(false);
-  const hideTimer    = useRef(null);
-  const stallTimer   = useRef(null);
+  const initialDuration = movie?.videoMediaMetadata?.durationMillis
+    ? parseFloat(movie.videoMediaMetadata.durationMillis) / 1000
+    : 0;
+
+  const [playing,            setPlaying]            = useState(false);
+  const [currentT,           setCurrentT]           = useState(0);
+  const [duration,           setDuration]           = useState(initialDuration);
+  const [buffered,           setBuffered]           = useState(0);
+  const [volume,             setVolume]             = useState(0.8);
+  const [muted,              setMuted]              = useState(false);
+  const [brightness,         setBrightness]         = useState(80);
+  const [speed,              setSpeed]              = useState(1);
+  const [isTranscode,        setIsTranscode]        = useState(false);
+  const [isTranscodeLoading, setIsTranscodeLoading] = useState(false);
+  const [subtitles,          setSubtitles]          = useState([]);
+  const [error,              setError]              = useState(null);
+  const [hovering,           setHovering]           = useState(true);
+  const hideTimer            = useRef(null);
 
   // Auto-hide controls
   const showControls = useCallback(() => {
@@ -48,7 +52,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     hideTimer.current = setTimeout(() => setHovering(false), 3500);
   }, []);
 
-  const initPlayer = useCallback((url) => {
+  const initPlayer = useCallback((url, transcodeMode = false, offset = 0) => {
     if (!artRef.current) return;
 
     // Destroy old instance first
@@ -57,6 +61,12 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
       try { artInstance.current.destroy(false); } catch (_) {}
     }
     artInstance.current = null;
+
+    transcodeOffsetRef.current = offset;
+    setIsTranscode(transcodeMode);
+    if (transcodeMode) {
+      setIsTranscodeLoading(true);
+    }
 
     const saved = HistoryService.getProgress(movie.id);
 
@@ -82,38 +92,82 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
       artInstance.current = art;
 
       art.on('ready', () => {
-        setDuration(art.duration);
-        if (saved?.currentTime > 5 && (saved.progressPercent || 0) < 95) {
+        setIsTranscodeLoading(false);
+        setError(null);
+        if (art.duration && !isNaN(art.duration) && art.duration > 0) {
+          if (!transcodeMode) {
+            setDuration(art.duration);
+          } else if (initialDuration > 0) {
+            setDuration(initialDuration);
+          }
+        }
+        
+        // If direct mode, resume from saved position
+        if (!transcodeMode && saved?.currentTime > 5 && (saved.progressPercent || 0) < 95) {
           art.currentTime = saved.currentTime;
         }
-        art.play();
+
+        art.play().catch(() => {});
         setPlaying(true);
-        setError(null);
       });
 
-      art.on('play',  () => setPlaying(true));
+      art.on('video:loadeddata', () => {
+        setIsTranscodeLoading(false);
+      });
+
+      art.on('video:canplay', () => {
+        setIsTranscodeLoading(false);
+      });
+
+      art.on('play',  () => {
+        setPlaying(true);
+        setIsTranscodeLoading(false);
+      });
       art.on('pause', () => setPlaying(false));
 
       art.on('video:timeupdate', () => {
-        setCurrentT(art.currentTime);
+        const realCurrent = transcodeMode
+          ? transcodeOffsetRef.current + (art.currentTime || 0)
+          : (art.currentTime || 0);
+        setCurrentT(realCurrent);
+
         const buf = art.video?.buffered;
-        if (buf?.length) setBuffered(buf.end(buf.length - 1));
+        if (buf?.length) {
+          const bufEnd = buf.end(buf.length - 1);
+          setBuffered(transcodeMode ? transcodeOffsetRef.current + bufEnd : bufEnd);
+        }
       });
 
-      art.on('video:durationchange', () => setDuration(art.duration));
+      art.on('video:durationchange', () => {
+        if (!transcodeMode && art.duration > 0) {
+          setDuration(art.duration);
+        } else if (initialDuration > 0) {
+          setDuration(initialDuration);
+        }
+      });
 
       art.on('error', (e) => {
         console.error('Player error:', e);
-        setError('Không thể phát video. Có thể do token hết hạn hoặc định dạng codec trình duyệt không hỗ trợ.');
+        setIsTranscodeLoading(false);
+        if (!transcodeMode) {
+          setError('Không thể phát trực tiếp trên trình duyệt Web. File phim này có thể sử dụng định dạng 10-bit Bluray (Hi10P) hoặc âm thanh AC3/FLAC nguyên bản.');
+        } else {
+          setError('Server Transcode tạm thời không phản hồi. Bạn có thể mở trực tiếp bằng VLC hoặc PotPlayer.');
+        }
       });
 
       // Auto-save progress every 5s
       progressSave.current = setInterval(() => {
-        if (art.currentTime > 2 && art.duration > 0) {
+        const currentPos = transcodeMode
+          ? transcodeOffsetRef.current + (art.currentTime || 0)
+          : (art.currentTime || 0);
+        const totalDur = duration || initialDuration || (art.duration || 0);
+
+        if (currentPos > 2 && totalDur > 0) {
           HistoryService.saveProgress(movie.id, {
             fileName: movie.name,
-            currentTime: art.currentTime,
-            duration: art.duration,
+            currentTime: currentPos,
+            duration: totalDur,
           });
         }
       }, 5000);
@@ -124,14 +178,15 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
       }
 
     } catch (err) {
+      setIsTranscodeLoading(false);
       setError(err.message);
     }
-  }, [movie, driveApi]);
+  }, [movie, driveApi, initialDuration, duration]);
 
   useEffect(() => {
     if (!artRef.current || !movie) return;
     const streamUrl = driveApi.getStreamUrl(movie.id);
-    initPlayer(streamUrl);
+    initPlayer(streamUrl, false, 0);
     return () => {
       clearInterval(progressSave.current);
       clearTimeout(hideTimer.current);
@@ -141,6 +196,21 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     };
   }, [movie, accessToken]);
 
+  /* ---- Transcode Switcher ---- */
+  const switchToTranscode = (targetOffset = null) => {
+    setError(null);
+    const startFrom = targetOffset !== null
+      ? targetOffset
+      : (currentT > 5 ? currentT : 0);
+    const transcodeUrl = driveApi.getTranscodeUrl(movie.id, startFrom);
+    initPlayer(transcodeUrl, true, startFrom);
+  };
+
+  const switchToDirect = () => {
+    setError(null);
+    const streamUrl = driveApi.getStreamUrl(movie.id);
+    initPlayer(streamUrl, false, 0);
+  };
 
   /* ---- Controls ---- */
   const togglePlay = () => {
@@ -161,7 +231,15 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
   const seek = (delta) => {
     const art = artInstance.current;
     if (!art) return;
-    art.currentTime = Math.max(0, Math.min(art.duration, art.currentTime + delta));
+    const maxDur = duration || initialDuration || 0;
+
+    if (isTranscode) {
+      const currentReal = transcodeOffsetRef.current + (art.currentTime || 0);
+      const target = Math.max(0, Math.min(maxDur > 0 ? maxDur : 999999, currentReal + delta));
+      switchToTranscode(target);
+    } else {
+      art.currentTime = Math.max(0, Math.min(art.duration || maxDur, art.currentTime + delta));
+    }
     showControls();
   };
 
@@ -169,8 +247,15 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     const art = artInstance.current;
     if (!art) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const pct  = (e.clientX - rect.left) / rect.width;
-    art.currentTime = pct * art.duration;
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const maxDur = duration || initialDuration || art.duration || 0;
+    const targetTime = pct * maxDur;
+
+    if (isTranscode) {
+      switchToTranscode(targetTime);
+    } else {
+      art.currentTime = targetTime;
+    }
     showControls();
   };
 
@@ -222,8 +307,9 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     }
   };
 
-  const progress  = duration > 0 ? (currentT / duration) * 100 : 0;
-  const bufferPct = duration > 0 ? (buffered  / duration) * 100 : 0;
+  const activeDuration = duration || initialDuration || 0;
+  const progress  = activeDuration > 0 ? (currentT / activeDuration) * 100 : 0;
+  const bufferPct = activeDuration > 0 ? (buffered  / activeDuration) * 100 : 0;
 
   /* ---- Keyboard shortcuts ---- */
   useEffect(() => {
@@ -240,7 +326,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [playing, volume]);
+  }, [playing, volume, isTranscode, currentT, duration, initialDuration]);
 
   return (
     <div className="player-backdrop" onMouseMove={showControls}>
@@ -251,36 +337,78 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
           {/* Artplayer mounts here */}
           <div ref={artRef} className="artplayer-app" />
 
+          {/* Transcode Loading Overlay */}
+          {isTranscodeLoading && !error && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'rgba(10, 14, 23, 0.85)',
+                backdropFilter: 'blur(10px)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 15,
+                gap: 16,
+                color: '#fff',
+                textAlign: 'center',
+                padding: 24,
+              }}
+            >
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div
+                  style={{
+                    width: 72,
+                    height: 72,
+                    borderRadius: '50%',
+                    border: '3px solid rgba(6, 182, 212, 0.2)',
+                    borderTopColor: '#06b6d4',
+                    animation: 'spin 1s linear infinite',
+                  }}
+                />
+                <Sparkles size={28} style={{ position: 'absolute', color: '#06b6d4' }} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#06b6d4' }}>
+                  ⚡ Đang khởi tạo Server Transcode (FFmpeg)...
+                </h3>
+                <p style={{ fontSize: 13, color: 'var(--text-p)', marginTop: 6, maxWidth: 460 }}>
+                  Đang giải mã luồng BD 10-bit Bluray / Hi10P sang định dạng H.264 & AAC mượt mà trên trình duyệt.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Error Overlay */}
           {error && (
-            <div className="player-error">
-              <AlertCircle size={44} style={{ color: '#ef4444' }} />
+            <div className="player-error" style={{ zIndex: 20 }}>
+              <AlertCircle size={48} style={{ color: '#ef4444' }} />
               <h3 style={{ fontSize: 18, fontWeight: 700 }}>Không thể phát trực tiếp trên trình duyệt Web</h3>
               <p style={{ fontSize: 13, color: 'var(--text-p)', maxWidth: 520, lineHeight: 1.6 }}>
-                File phim này là bản <strong>BD-Bluray 10-bit / Hi10P</strong> (thường dùng cho Anime/Phim chất lượng cao). Trình duyệt Chrome/Edge không giải mã được H.264 10-bit hoặc âm thanh AC3/FLAC nguyên bản.
+                File phim này là bản <strong>BD–Bluray 10–bit / Hi10P</strong> (thường dùng cho Anime/Phim chất lượng cao). Trình duyệt Chrome/Edge không giải mã được H.264 10–bit hoặc âm thanh AC3/FLAC nguyên bản.
               </p>
               
-              <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button
-                  onClick={() => {
-                    const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
-                    setIsTranscode(true);
-                    setError(null);
-                    initPlayer(transcodeUrl);
-                  }}
+                  onClick={() => switchToTranscode(currentT || 0)}
                   style={{
                     background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
                     color: '#fff',
-                    padding: '10px 18px',
+                    padding: '11px 20px',
                     borderRadius: '8px',
                     fontWeight: 700,
-                    fontSize: 13,
+                    fontSize: 14,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 6,
+                    gap: 8,
                     cursor: 'pointer',
-                    boxShadow: '0 4px 14px rgba(6,182,212,0.4)'
+                    boxShadow: '0 4px 16px rgba(6,182,212,0.45)',
+                    border: 'none',
+                    transition: 'transform 0.15s ease',
                   }}
+                  onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.03)'}
+                  onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                 >
                   ⚡ Phát qua Server Transcode (FFmpeg Live)
                 </button>
@@ -293,7 +421,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                   style={{
                     background: 'linear-gradient(135deg, #e50914, #b8000a)',
                     color: '#fff',
-                    padding: '10px 18px',
+                    padding: '11px 18px',
                     borderRadius: '8px',
                     fontWeight: 700,
                     fontSize: 13,
@@ -301,6 +429,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                     alignItems: 'center',
                     gap: 6,
                     cursor: 'pointer',
+                    border: 'none',
                     boxShadow: '0 4px 14px rgba(229,9,20,0.4)'
                   }}
                 >
@@ -317,7 +446,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                     background: 'var(--bg-card)',
                     border: '1px solid var(--border)',
                     color: 'var(--text-h)',
-                    padding: '10px 18px',
+                    padding: '11px 18px',
                     borderRadius: '8px',
                     fontWeight: 600,
                     fontSize: 13,
@@ -328,7 +457,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                 </button>
               </div>
 
-              <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 16 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 18 }}>
                 💡 <strong>Giải pháp lâu dài:</strong> Bạn có thể dùng <strong>App Android CineDrive (ExoPlayer)</strong> hoặc dùng app <strong>Nova Video Player / VLC</strong> kết nối Drive để xem full 4K HDR 10-bit không bị lỗi.
               </p>
             </div>
@@ -344,14 +473,9 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
               <button
                 onClick={() => {
                   if (!isTranscode) {
-                    const transcodeUrl = driveApi.getTranscodeUrl(movie.id);
-                    setIsTranscode(true);
-                    setShowStallHint(false);
-                    initPlayer(transcodeUrl);
+                    switchToTranscode();
                   } else {
-                    const streamUrl = driveApi.getStreamUrl(movie.id);
-                    setIsTranscode(false);
-                    initPlayer(streamUrl);
+                    switchToDirect();
                   }
                 }}
                 style={{
@@ -360,17 +484,18 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                   color: '#fff',
                   fontSize: '11px',
                   fontWeight: 700,
-                  padding: '4px 10px',
+                  padding: '5px 12px',
                   borderRadius: '6px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px',
-                  boxShadow: isTranscode ? '0 0 12px rgba(6,182,212,0.5)' : 'none',
+                  gap: '6px',
+                  boxShadow: isTranscode ? '0 0 14px rgba(6,182,212,0.5)' : 'none',
                   transition: 'all 0.2s ease'
                 }}
+                title={isTranscode ? "Bấm để chuyển về phát trực tiếp Direct Stream" : "Bấm để kích hoạt Live Transcoding FFmpeg"}
               >
-                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Bật)' : '⚡ Đổi sang Server Transcode FFmpeg'}
+                {isTranscode ? '⚡ Luồng: FFmpeg Transcode (Đang bật)' : '⚡ Chuyển sang Server Transcode FFmpeg'}
               </button>
             </div>
             <div className="player-topbar-actions">
@@ -448,7 +573,7 @@ export function VideoPlayer({ movie, accessToken, driveApi, onClose }) {
                   {muted ? <VolumeX /> : <Volume2 />}
                 </button>
                 <span className="time-display">
-                  {formatTime(currentT)} <span className="sep">/</span> <span className="total">{formatTime(duration)}</span>
+                  {formatTime(currentT)} <span className="sep">/</span> <span className="total">{formatTime(activeDuration)}</span>
                 </span>
               </div>
 
