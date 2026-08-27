@@ -5,24 +5,28 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Tìm đòn bẩy binary FFmpeg ở mọi vị trí khả thi trên Azure Linux / Windows / Local
+ * Tìm đòn bẩy binary FFmpeg chuẩn theo HĐH (Linux vs Windows)
  */
 function findFfmpegBinary() {
+  const isWin = process.platform === 'win32';
+  const binName = isWin ? 'ffmpeg.exe' : 'ffmpeg';
   const staticPath = require('ffmpeg-static');
+
   const candidates = [
-    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg'),
-    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
-    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
-    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', binName),
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', binName),
     staticPath ? path.resolve(staticPath) : null,
-    staticPath && staticPath.startsWith('/') ? path.join(__dirname, staticPath) : null,
-    staticPath && staticPath.startsWith('/') ? path.join(process.cwd(), staticPath) : null,
   ];
 
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
+      // Lọc bỏ file .exe nếu đang chạy trên Linux
+      if (!isWin && candidate.endsWith('.exe')) continue;
+      // Lọc bỏ file ELF nếu đang chạy trên Windows
+      if (isWin && !candidate.endsWith('.exe')) continue;
+
       try {
-        if (process.platform !== 'win32') {
+        if (!isWin) {
           fs.chmodSync(candidate, '755');
         }
       } catch (_) {}
@@ -33,7 +37,7 @@ function findFfmpegBinary() {
 }
 
 const ffmpegExecutable = findFfmpegBinary();
-console.log('[FFmpeg] Found Binary Path:', ffmpegExecutable, 'Exists:', fs.existsSync(ffmpegExecutable));
+console.log('[FFmpeg] Found Binary Path:', ffmpegExecutable, 'Platform:', process.platform);
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
@@ -41,13 +45,13 @@ app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
 const PORT = process.env.PORT || 3001;
 
 app.get('/', (req, res) => {
+  const bin = findFfmpegBinary();
   res.json({
     status: 'ok',
     message: '🎬 CineDrive Transcoder is Running!',
-    ffmpegExecutable,
-    exists: fs.existsSync(ffmpegExecutable),
-    cwd: process.cwd(),
-    dirname: __dirname
+    ffmpegExecutable: bin,
+    platform: process.platform,
+    exists: fs.existsSync(bin),
   });
 });
 
@@ -83,6 +87,8 @@ app.get('/stream', (req, res) => {
     '-loglevel', 'warning',
     'pipe:1',
   ];
+
+  console.log('[FFmpeg] spawn:', activeFfmpeg);
 
   const ffmpeg = spawn(activeFfmpeg, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
