@@ -83,86 +83,55 @@ app.get('/proxy', async (req, res) => {
   }
 
   try {
-    const https = require('https');
-    const { URL } = require('url');
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token });
+    const drive = google.drive({ version: 'v3', auth });
 
-    // 1. Lấy link CDN chuyển hướng từ Google Drive API
-    const cdnUrlString = await new Promise((resolve, reject) => {
-      const driveReq = https.request(
-        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${access_token}` }
-        },
-        (driveRes) => {
-          if (driveRes.headers.location) {
-            resolve(driveRes.headers.location);
-          } else {
-            resolve(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`);
-          }
-        }
-      );
-      driveReq.on('error', (err) => reject(err));
-      driveReq.end();
-    });
-
-    console.log(`[Proxy Direct Stream] Fetching CDN for fileId=${fileId.substring(0, 15)}...`);
-
-    // 2. Tải luồng trực tiếp từ Google CDN và truyền thẳng về client (Forwarding Range headers)
-    const targetUrl = new URL(cdnUrlString);
-    const cdnHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    };
-
+    const reqHeaders = {};
     if (req.headers.range) {
-      cdnHeaders['Range'] = req.headers.range;
+      reqHeaders['Range'] = req.headers.range;
     }
 
-    const cdnReq = https.request(
-      targetUrl,
-      { method: 'GET', headers: cdnHeaders },
-      (cdnRes) => {
-        const outHeaders = {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
-          'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
-          'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=3600',
-        };
+    console.log(`[Proxy Stream] Requesting fileId=${fileId.substring(0, 15)}... Range=${req.headers.range || 'All'}`);
 
-        if (cdnRes.headers['content-type']) {
-          outHeaders['Content-Type'] = cdnRes.headers['content-type'];
-        }
-        if (cdnRes.headers['content-length']) {
-          outHeaders['Content-Length'] = cdnRes.headers['content-length'];
-        }
-        if (cdnRes.headers['content-range']) {
-          outHeaders['Content-Range'] = cdnRes.headers['content-range'];
-        }
-
-        res.writeHead(cdnRes.statusCode || 206, outHeaders);
-        cdnRes.pipe(res);
-
-        req.on('close', () => {
-          try { cdnRes.destroy(); } catch (_) {}
-        });
+    const driveRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      {
+        responseType: 'stream',
+        headers: reqHeaders
       }
     );
 
-    cdnReq.on('error', (err) => {
-      console.error('[CDN Stream Error]', err.message);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Lỗi kết nối tới Google CDN' });
-      }
-    });
+    const outHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+    };
 
-    cdnReq.end();
+    if (driveRes.headers['content-type']) {
+      outHeaders['Content-Type'] = driveRes.headers['content-type'];
+    }
+    if (driveRes.headers['content-length']) {
+      outHeaders['Content-Length'] = driveRes.headers['content-length'];
+    }
+    if (driveRes.headers['content-range']) {
+      outHeaders['Content-Range'] = driveRes.headers['content-range'];
+    }
+
+    res.writeHead(driveRes.status || 200, outHeaders);
+    driveRes.data.pipe(res);
+
+    req.on('close', () => {
+      try { driveRes.data.destroy(); } catch (_) {}
+    });
 
   } catch (err) {
     console.error('[Proxy Error]', err.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message || 'Lỗi khi kết nối tới Google Drive' });
+      res.status(500).json({ error: err.message || 'Lỗi khi tải stream từ Google Drive' });
     }
   }
 });
