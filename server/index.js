@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Tìm đòn bẩy binary FFmpeg chuẩn theo HĐH (Linux vs Windows)
+ * Tìm binary FFmpeg chuẩn theo HĐH
  */
 function findFfmpegBinary() {
   const isWin = process.platform === 'win32';
@@ -27,10 +27,10 @@ function findFfmpegBinary() {
   const linuxCandidates = [
     path.join(__dirname, 'ffmpeg'),
     path.join(process.cwd(), 'ffmpeg'),
-    '/usr/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
     path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg'),
     path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
   ];
 
   for (const c of linuxCandidates) {
@@ -39,7 +39,7 @@ function findFfmpegBinary() {
       return c;
     }
   }
-  return 'ffmpeg'; // Fallback về system ffmpeg trên Linux
+  return 'ffmpeg';
 }
 
 const ffmpegExecutable = findFfmpegBinary();
@@ -77,6 +77,16 @@ app.get('/stream', (req, res) => {
 
   console.log(`\n[Transcode] ▶ Bắt đầu: fileId=${fileId.substring(0, 20)}... dùng binary: ${activeFfmpeg}`);
 
+  // Thiết lập HTTP headers phát luồng MP4 ngay lập tức
+  res.writeHead(200, {
+    'Content-Type': 'video/mp4',
+    'Cache-Control': 'no-cache, no-store',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': 'Range, Authorization',
+    'Connection': 'keep-alive',
+  });
+
   const args = [
     '-headers', `Authorization: Bearer ${access_token}\r\n`,
     '-i', inputUrl,
@@ -87,8 +97,6 @@ app.get('/stream', (req, res) => {
     '-c:a', 'aac',
     '-b:a', '128k',
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-map', '0:v:0?',
-    '-map', '0:a:0?',
     '-f', 'mp4',
     '-loglevel', 'warning',
     'pipe:1',
@@ -100,12 +108,10 @@ app.get('/stream', (req, res) => {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  let hasStartedSending = false;
-  let stderrLog = '';
+  ffmpeg.stdout.pipe(res);
 
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
-    stderrLog += msg;
     if (msg.includes('frame=') || msg.includes('fps=')) {
       process.stdout.write('\r[FFmpeg] ' + msg.trim());
     } else {
@@ -113,37 +119,18 @@ app.get('/stream', (req, res) => {
     }
   });
 
-  ffmpeg.stdout.on('data', (chunk) => {
-    if (!hasStartedSending) {
-      hasStartedSending = true;
-      console.log('[Transcode] ⚡ Đã nhận dữ liệu đầu tiên từ FFmpeg! Gửi MP4 stream cho client.');
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-    res.write(chunk);
-  });
-
   ffmpeg.on('error', (err) => {
     console.error('[FFmpeg spawn error]', err);
-    if (!hasStartedSending && !res.headersSent) {
-      res.status(500).json({ error: `Lỗi khởi chạy FFmpeg (${activeFfmpeg}): ${err.message}` });
-    } else {
-      res.end();
-    }
+    if (!res.writableEnded) res.end();
   });
 
   ffmpeg.on('close', (code) => {
     console.log(`\n[FFmpeg] Kết thúc code: ${code}`);
-    if (!hasStartedSending && !res.headersSent) {
-      res.status(500).json({ error: `FFmpeg mã thoát ${code}: ${stderrLog.substring(0, 300)}` });
-    } else if (!res.writableEnded) {
-      res.end();
-    }
+    if (!res.writableEnded) res.end();
   });
 
   req.on('close', () => {
-    console.log('[Transcode] Client ngắt, kill FFmpeg');
+    console.log('[Transcode] Client ngắt kết nối, dừng FFmpeg');
     try {
       ffmpeg.kill('SIGKILL');
     } catch (_) {}

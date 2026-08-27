@@ -23,11 +23,10 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: Install FFmpeg and bundle Linux binary
+      - name: Download standalone static Linux FFmpeg binary
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          cp /usr/bin/ffmpeg server/ffmpeg
-          chmod +x server/ffmpeg
+          curl -L -o server/ffmpeg https://github.com/eugeneware/ffmpeg-static/releases/download/b5.2.0/linux-x64
+          chmod 755 server/ffmpeg
 
       - name: npm install and zip server directory
         run: |
