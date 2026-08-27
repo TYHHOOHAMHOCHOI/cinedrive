@@ -721,14 +721,77 @@ img    { display: block; max-width: 100%; }
 @media (max-width: 900px) {
   .sidebar { display:none; }
   .main-area { margin-left: 0; }
-  .movie-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:14px; }
-  .page-content { padding: 20px 16px 60px; }
-  .top-nav { padding: 0 16px; }
+  .movie-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+  .page-content { padding: 16px 12px 90px; }
+  .top-nav { padding: 0 12px; height: 60px; }
+  .search-kbd { display: none; }
+  .search-box input { padding: 8px 12px 8px 36px; font-size: 12.5px; }
+
+  /* Mobile Bottom Navigation Bar */
+  .mobile-bottom-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 64px;
+    background: rgba(14, 17, 24, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    z-index: 90;
+    padding: 0 4px;
+  }
+
+  .mobile-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    color: var(--text-p);
+    font-size: 10px;
+    font-weight: 600;
+    flex: 1;
+    padding: 6px 0;
+    transition: var(--trans);
+  }
+  .mobile-nav-item.active {
+    color: var(--primary);
+  }
+  .mobile-nav-item.logout {
+    color: #ef4444;
+  }
+}
+
+@media (min-width: 901px) {
+  .mobile-bottom-nav {
+    display: none !important;
+  }
 }
 
 @media (max-width: 600px) {
   .movie-grid { grid-template-columns: repeat(2, 1fr); gap:10px; }
   .cw-card { width: 220px; }
   .player-shell { width:100%; height:100%; border-radius:0; }
-  .hero-title { font-size: 26px; }
+  .hero-title { font-size: 24px; }
 }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 20px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  margin-top: 16px;
+}
+.empty-state svg { color: var(--text-dim); margin-bottom: 12px; }
+.empty-state h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.empty-state p { font-size: 13px; color: var(--text-p); max-width: 440px; line-height: 1.5; }
+

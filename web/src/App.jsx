@@ -3,6 +3,7 @@ import './index.css';
 
 import { Sidebar }      from './components/Sidebar';
 import { TopNav }       from './components/TopNav';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { MovieCard, ContinueCard } from './components/MovieCard';
 import { VideoPlayer }  from './components/VideoPlayer';
 
@@ -118,7 +119,9 @@ export default function App() {
         <TopNav
           userProfile={userProfile}
           onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
           onRefresh={() => loadVideos(currentFolder?.id)}
+          onScanAll={() => loadVideos('all')}
           loading={loading}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
@@ -246,9 +249,30 @@ export default function App() {
                   </div>
                 ) : filteredVideos.length === 0 ? (
                   <div className="empty-state">
-                    <Film />
-                    <h3>Chưa có phim trong thư mục "Cine"</h3>
-                    <p>{searchQuery ? `Không có kết quả cho "${searchQuery}"` : 'Hãy tải hoặc thả các file phim (.mp4, .mkv) vào thư mục "Cine" trên Google Drive của bạn.'}</p>
+                    <Film size={48} />
+                    <h3>Chưa tìm thấy phim trong thư mục "Cine"</h3>
+                    <p>{searchQuery ? `Không có kết quả cho "${searchQuery}"` : 'Hãy tải hoặc tạo thư mục "Cine" trên Google Drive, hoặc bấm nút dưới đây để tìm tất cả phim trên toàn bộ tài khoản.'}</p>
+                    
+                    <button
+                      onClick={() => loadVideos('all')}
+                      style={{
+                        marginTop: 14,
+                        padding: '10px 20px',
+                        borderRadius: '30px',
+                        background: 'linear-gradient(135deg, var(--primary), var(--primary-dim))',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: 14,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: '0 4px 14px var(--primary-glow)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <FolderSync size={16} />
+                      <span>Quét toàn bộ Google Drive (Không giới hạn thư mục Cine)</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="movie-grid">
@@ -267,6 +291,17 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* MOBILE BOTTOM NAV */}
+      {accessToken && (
+        <MobileBottomNav
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onSignOut={handleSignOut}
+          onRefresh={() => loadVideos(currentFolder?.id)}
+          loading={loading}
+        />
+      )}
 
       {/* VIDEO PLAYER MODAL */}
       {selectedMovie && accessToken && (

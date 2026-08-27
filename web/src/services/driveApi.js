@@ -48,7 +48,9 @@ export class DriveApiService {
     if (!this.accessToken) throw new Error('Chưa đăng nhập Google Drive.');
 
     let targetFolderId = folderId;
-    if (!targetFolderId) {
+    if (targetFolderId === 'all') {
+      targetFolderId = null;
+    } else if (!targetFolderId) {
       targetFolderId = await this.findCineFolderId();
     }
 
