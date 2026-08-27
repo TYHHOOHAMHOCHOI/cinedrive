@@ -83,38 +83,42 @@ app.get('/proxy', async (req, res) => {
   }
 
   try {
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token });
-    const drive = google.drive({ version: 'v3', auth });
-
-    const axios = require('axios');
+    const https = require('https');
     
-    // Gọi API lấy link alt=media, nhưng không follow redirect (maxRedirects: 0)
-    const response = await axios.get(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-      {
-        headers: { Authorization: `Bearer ${access_token}` },
-        maxRedirects: 0,
-        validateStatus: (status) => status >= 200 && status < 400
-      }
-    );
+    // Sử dụng module https có sẵn của Node.js để bắt 302 Redirect từ Google Drive API
+    const redirectUrl = await new Promise((resolve, reject) => {
+      const driveReq = https.request(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${access_token}` }
+        },
+        (driveRes) => {
+          if (driveRes.statusCode === 302 || driveRes.statusCode === 303) {
+            resolve(driveRes.headers.location);
+          } else if (driveRes.headers.location) {
+            resolve(driveRes.headers.location);
+          } else {
+            // Trường hợp không trả về 302 location
+            resolve(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`);
+          }
+        }
+      );
+      driveReq.on('error', (err) => reject(err));
+      driveReq.end();
+    });
 
-    let redirectUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${access_token}`;
-    if (response.status === 302 || response.status === 303) {
-      redirectUrl = response.headers.location;
-    }
-
-    // Thiết lập header no-referrer để bypass kiểm duyệt Referer của Google CDN
+    console.log(`[Proxy 302 Success] Redirecting fileId=${fileId.substring(0, 15)}...`);
+    
+    // Gắn Referrer-Policy để trình duyệt không gửi Referer domain Vercel lên Google CDN
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    console.log(`[Proxy] Chuyển hướng (302) tới Google CDN cho fileId=${fileId.substring(0, 15)}...`);
     return res.redirect(302, redirectUrl);
 
   } catch (err) {
     console.error('[Proxy Error]', err.message);
     if (!res.headersSent) {
-      res.status(err.status || 500).json({ error: err.message || 'Lỗi khi lấy link trực tiếp từ Google Drive' });
+      res.status(500).json({ error: err.message || 'Lỗi khi lấy link trực tiếp từ Google Drive' });
     }
   }
 });
@@ -165,25 +169,27 @@ app.get('/stream', async (req, res) => {
     // Nhận luồng video từ standard input (pipe:0)
     args.push('-i', 'pipe:0');
 
-    // Cấu hình mã hóa Video: Giảm phân giải xuống 720p để Azure Free Tier không bị quá tải CPU
+    // Cấu hình mã hóa Video: Ép xuống 360p / 30FPS / Bitrate thấp siêu nhẹ cho Azure Free Tier
     args.push(
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
       '-pix_fmt', 'yuv420p',
-      '-vf', 'scale=-2:720', // Ép về 720p để giảm 50% CPU load
-      '-r', '24',            // Ép frame rate 24fps
-      '-crf', '28',          // Giảm chất lượng một chút để encode nhanh hơn
-      '-threads', '2',       // Giới hạn số luồng để không làm sập Azure App Service
+      '-vf', 'scale=-2:360',  // Đẩy xuống 360p để transcode cực nhanh không ăn CPU
+      '-r', '24',
+      '-b:v', '600k',        // Bitrate 600k cực nhẹ
+      '-maxrate', '800k',
+      '-bufsize', '1200k',
+      '-threads', '2',
       '-g', '48'
     );
 
-    // Cấu hình mã hóa Audio: AAC Stereo 192k tương thích mọi thiết bị
+    // Cấu hình mã hóa Audio: AAC Stereo 96k
     args.push(
       '-c:a', 'aac',
       '-ac', '2',
-      '-b:a', '192k',
-      '-ar', '48000'
+      '-b:a', '96k',
+      '-ar', '44100'
     );
 
     // Stream mapping: Chọn track video đầu tiên và track audio đầu tiên nếu có
