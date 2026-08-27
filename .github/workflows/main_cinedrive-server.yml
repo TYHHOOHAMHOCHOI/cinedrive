@@ -31,6 +31,7 @@ jobs:
       - name: npm install and zip server directory
         run: |
           cd server
+          touch restart.txt
           npm install --production
           zip -r ../server.zip .
 
