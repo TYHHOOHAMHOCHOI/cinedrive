@@ -1,9 +1,24 @@
 const express = require('express');
 const cors = require('cors');
 const { spawn } = require('child_process');
-const ffmpegPath = require('ffmpeg-static');
+const path = require('path');
+const fs = require('fs');
 
-console.log('[FFmpeg] Binary:', ffmpegPath);
+let ffmpegPath = require('ffmpeg-static');
+
+if (ffmpegPath) {
+  ffmpegPath = path.resolve(ffmpegPath);
+  console.log('[FFmpeg] Absolute Binary Path:', ffmpegPath);
+  // Đảm bảo file có quyền chạy (executable) trên Linux (Azure Web App)
+  try {
+    if (process.platform !== 'win32' && fs.existsSync(ffmpegPath)) {
+      fs.chmodSync(ffmpegPath, '755');
+      console.log('[FFmpeg] chmod 755 thành công');
+    }
+  } catch (err) {
+    console.warn('[FFmpeg] Không thể chmod 755:', err.message);
+  }
+}
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
@@ -11,7 +26,12 @@ app.use(cors({ origin: '*', methods: ['GET', 'HEAD', 'OPTIONS'] }));
 const PORT = process.env.PORT || 3001;
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: '🎬 CineDrive Transcoder is Running!', ffmpegPath });
+  res.json({
+    status: 'ok',
+    message: '🎬 CineDrive Transcoder is Running!',
+    ffmpegPath,
+    exists: ffmpegPath ? fs.existsSync(ffmpegPath) : false
+  });
 });
 
 /**
@@ -25,14 +45,13 @@ app.get('/stream', (req, res) => {
     return res.status(400).json({ error: 'Thiếu fileId hoặc access_token' });
   }
 
+  if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
+    return res.status(500).json({ error: 'FFmpeg binary không tồn tại trên server' });
+  }
+
   const inputUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
 
   console.log(`\n[Transcode] ▶ fileId=${fileId.substring(0, 20)}...`);
-
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Transfer-Encoding', 'chunked');
 
   // FFmpeg download trực tiếp từ Google Drive với Authorization header
   const args = [
@@ -52,36 +71,58 @@ app.get('/stream', (req, res) => {
     'pipe:1',   // output ra stdout
   ];
 
-  console.log('[FFmpeg] spawn:', ffmpegPath, args.slice(0, 4).join(' '), '...');
+  console.log('[FFmpeg] spawn:', ffmpegPath);
 
   const ffmpeg = spawn(ffmpegPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  ffmpeg.stdout.pipe(res);
+  let hasStartedSending = false;
+  let stderrLog = '';
 
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
+    stderrLog += msg;
     if (msg.includes('frame=') || msg.includes('fps=')) {
       process.stdout.write('\r[FFmpeg] ' + msg.trim());
-    } else if (msg.toLowerCase().includes('error') || msg.toLowerCase().includes('403') || msg.toLowerCase().includes('invalid')) {
+    } else {
       console.error('[FFmpeg stderr]', msg.trim());
+    }
+  });
+
+  ffmpeg.stdout.on('data', (chunk) => {
+    if (!hasStartedSending) {
+      hasStartedSending = true;
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.write(chunk);
+  });
+
+  ffmpeg.on('error', (err) => {
+    console.error('[FFmpeg spawn error]', err);
+    if (!hasStartedSending && !res.headersSent) {
+      res.status(500).json({ error: `Lỗi khởi chạy FFmpeg: ${err.message}` });
+    } else {
+      res.end();
     }
   });
 
   ffmpeg.on('close', (code) => {
     console.log(`\n[FFmpeg] Kết thúc code: ${code}`);
-    if (!res.writableEnded) res.end();
-  });
-
-  ffmpeg.on('error', (err) => {
-    console.error('[FFmpeg spawn error]', err);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    if (!hasStartedSending && !res.headersSent) {
+      res.status(500).json({ error: `FFmpeg mã thoát ${code}: ${stderrLog.substring(0, 300)}` });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   });
 
   req.on('close', () => {
     console.log('[Transcode] Client ngắt, kill FFmpeg');
-    ffmpeg.kill('SIGKILL');
+    try {
+      ffmpeg.kill('SIGKILL');
+    } catch (_) {}
   });
 });
 
